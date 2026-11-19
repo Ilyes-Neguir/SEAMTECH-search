@@ -84,7 +84,7 @@ CITATIONS_MAX = 20  # borne d'affichage : au-delà, la réponse le dit
 # Compréhension déterministe de la question (aucun modèle)
 # ---------------------------------------------------------------------------
 
-# Codes de fiche dans la question : « 7792-SO », « 0701-GV-001 ».
+# Codes de fiche dans la question : « 1042-EX », « 0701-GV-001 ».
 REGEX_CODE = re.compile(r"\b(\d{2,6}-[A-Za-z]{2,6}(?:-\d{1,4})?)\b")
 REGEX_ANNEE = re.compile(r"\b(20\d{2})\b")
 # Nombres à la française (« 6,5 ») — la virgule est un séparateur décimal ici.
@@ -364,7 +364,7 @@ def _ids_fiches(cursor: Any, codes: list[str]) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 def _resoudre_cote_fiche(cursor: Any, ctx: Contexte, inclure_a_valider: bool) -> Reponse | None:
-    """« quelle est la SLU de la fiche 7792-SO ? » — lecture directe en
+    """« quelle est la SLU de la fiche 1042-EX ? » — lecture directe en
     fiche_cotes, les deux jeux comparés (jamais d'un seul deviné)."""
     if not (ctx.code and ctx.cote and not ctx.entre):
         return None
@@ -684,7 +684,7 @@ def _resoudre_galon(cursor: Any, ctx: Contexte, inclure_a_valider: bool) -> Repo
 
 
 def _resoudre_matiere_ambigue(cursor: Any, ctx: Contexte, inclure_a_valider: bool) -> Reponse | None:
-    """« quelle est la matière de la fiche 7792-SO ? » — « matière » sans
+    """« quelle est la matière de la fiche 1042-EX ? » — « matière » sans
     préciser tissu, galon ou renfort : on LISTE les lectures possibles, chacune
     sourcée (jamais un choix silencieux)."""
     if not (ctx.code and ctx.demande_matiere and not ctx.bande_galon and not re.search(r"\bgalon\b|\btissu\b|\brenfort\b|\bepaisseur\b", ctx.normalisee)):
@@ -932,7 +932,7 @@ def _resoudre_defaut(cursor: Any, ctx: Contexte, inclure_a_valider: bool, ts_con
             f"Rechercher « {str(ligne[0])} » ({ligne[1]}) dans l'écran Recherche pour examiner la fiche vous-même."
             for ligne in cursor.fetchall()
         ]
-        pistes.append("Reformulez en nommant la fiche (ex. « quelle est la SLU de la fiche 7792-SO ? ») ou le champ demandé.")
+        pistes.append("Reformulez en nommant la fiche (ex. « quelle est la SLU de la fiche 1042-EX ? ») ou le champ demandé.")
     return Reponse(
         ETAT_SANS_SOURCE,
         "Je ne trouve pas cette information dans les fiches : la base ne contient pas ce champ, je n'invente aucune valeur.",
@@ -1021,7 +1021,7 @@ def poser(index: Any, question: str, inclure_a_valider: bool = False) -> dict[st
         return {
             "question": "",
             "etat": ETAT_SANS_SOURCE,
-            "reponse": "Posez une question sur les fiches (ex. « quelle est la SLU de la fiche 7792-SO ? »).",
+            "reponse": "Posez une question sur les fiches (ex. « quelle est la SLU de la fiche 1042-EX ? »).",
             "citations": [],
             "interpretations": [],
             "pistes": [],

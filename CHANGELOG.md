@@ -1,5 +1,120 @@
 # Changelog
 
+## 2026-11-14 — auto-validation par seuil : RG3 est remplacée
+
+**Décision du commanditaire, actée : l'auto-validation existe.** La règle
+**RG3** (« le dépôt ne valide jamais ») est remplacée.
+
+**Le seuil est 90 %, et ce chiffre est mesuré, pas choisi.** Il a d'abord été
+fixé à 80 % le 2026-11-14, puis remonté à 90 % le 2026-11-16 après mesure des
+7 fiches du corpus réel : à 80 %, elles s'auto-validaient TOUTES (scores
+0,836 → 0,920, aucune anomalie) et la file de validation se vidait
+entièrement — six jobs de CI tombaient, l'application n'avait plus rien à
+faire valider. À 90 %, 3 fiches sur 7 s'auto-valident et 4 restent en file.
+Les scores sont dans `docs/RECETTE_EXHAUSTIVE_2026-11-16.md`.
+
+Attention, ce palier est un compromis, pas une frontière : les 7 fiches
+tiennent dans 8 points d'écart sans aucun trou. Le score ne sépare donc pas
+« les bonnes » des « mauvaises » sur ce corpus — il sépare 0,914 de 0,900,
+soit 1,4 %. Le seuil reste un seul chiffre à modifier :
+
+- score d'extraction **strictement supérieur à 90 %** ET aucune anomalie
+  bloquante ⇒ la fiche arrive `valide`, sans approbateur ;
+- sinon (score ≤ 90 %, ou anomalie bloquante) ⇒ `a_valider`, comme avant.
+
+Seuil nommé et unique : `SEUIL_AUTO_VALIDATION` dans
+`seamtech_search/fiches/auto_validation.py`. « Anomalie bloquante » n'invente
+rien : c'est `CODES_BLOQUANTS` (déjà nommé) **ou** la gravité « forte » (déjà
+le signal bloquant d'`extractions_voile.py` et `liaison_voile.py`).
+
+La décision est appliquée **après les contrôles RG16**, seul endroit de
+l'écriture qui connaît toutes les anomalies : trancher plus tôt auto-
+validerait une fiche au score élevé mais à la géométrie incohérente.
+
+Traçabilité : action distincte `auto_valider`, `id_utilisateur` **NULL** — une
+auto-validation n'a pas d'acteur humain, et le commentaire le dit. Elle n'est
+donc pas comptable comme une validation humaine dans l'audit.
+
+**Effets que la décision ne mentionnait pas, mesurés et non tranchés** (détail
+dans `docs/RECETTE_EXHAUSTIVE_2026-11-16.md`, section « Ce que la nouvelle
+règle change — à confirmer ») :
+
+1. une fiche auto-validée est protégée par RG11 : **redéposer le même dossier
+   est refusé** (il faut la rouvrir) ;
+2. **la file de validation ne retient plus que 4 fiches sur 7** ;
+3. **aucune notification** n'est émise (pas de destinataire évident) ;
+4. les fiches déjà `a_valider` ne sont **pas** réévaluées rétroactivement.
+
+**Incohérence signalée, non corrigée** (hors périmètre) : `reprise.py` émet la
+gravité « haute », hors de la nomenclature documentée
+(`faible | moyenne | forte`). Elle est traitée comme bloquante.
+
+
+## 2026-11-05 — comparaison, réutilisation, et une cote relue deux fois
+
+Exécution du plan « comparaison et réutilisation » (lots 0 → 8), avec le lot 2
+accessoires mené sur les documents réels de l'atelier. Suivi détaillé, preuves
+et état honnête : `docs/PLAN_COMPARAISON_SUIVI.md`.
+
+⚠️ **État du Lot 1 « socle », mis à jour le 06/11.** Ce paragraphe affirmait
+plus haut que le Lot 1 n'était pas livré ; une revue du code à `dcc702c`
+l'établissait alors point par point. **Cette affirmation est depuis devenue
+fausse et elle est remplacée, pas nuancée.** Sont livrés, commités et éprouvés :
+**1.2** vraisemblance des champs (`62d2377`), **1.3** référence comparée à trois,
+non bloquante (`f232cf9`), **1.4** complétude par gabarit, bloquante
+(`d5409fe`), **1.5** contrôles RG16 obligatoires à l'écriture (`090eec7`), puis
+les correctifs `95f445e`, `601f448` et `96dea44`.
+
+**Reste NON livré : le Lot 1.1, la table de correspondance.** Ce qui est livré
+à `6a485b4` est l'**instrument** qui la produirait
+(`scripts/mesurer_correspondances.py`) ; il n'a **jamais été exécuté sur les 338
+fiches**, parce que ce dépôt ne contient pas ce corpus. La table n'est donc pas
+écrite, la migration de reprise correspondante non plus, et le tableau
+avant/après sur corpus réel (1.6) n'est pas mesuré : ces trois points exigent le
+corpus, ils ne sont pas « reportés ».
+
+La première version du rapport avait masqué un lot manquant en étiquetant
+« Lot 1 » l'écran de comparaison groupe, qui relève du Lot 6. Cet étiquetage
+reste corrigé ci-dessous, et la présente mise à jour s'applique la même règle :
+aucune affirmation qui ne soit opposable par une commande.
+
+- **Comparaison d'un groupe de fiches** (`9588ce3`, `be346f1`, `4895cf4`) :
+  attributs à gauche, une colonne par fiche, bascule de vue, et une règle qui
+  compte — normaliser un axe, ce n'est pas fusionner des axes distincts.
+  *(Ces commits relèvent du Lot 6, pas du Lot 1.)*
+- **Lot 2 — double vérification des cotes d'accessoires** (`f8f893a`). Mesuré
+  sur les documents réels avant d'écrire une ligne : les dossiers d'accessoires
+  mélangent trois natures (formulaire imprimé, plan à cotes nues, document
+  numérisé sans couche texte), et deux pièges — une même ligne peut porter deux
+  cotes, et le nom du dossier n'est pas une identité fiable. Une cote n'est
+  désormais promue « vérifiée » que si deux lectures indépendantes concordent
+  (par libellé, puis par proximité géométrique). Sans seconde lecture possible,
+  rien n'est promu ; un désaccord devient une anomalie forte renvoyée à
+  l'approbateur, jamais résolue en silence. Chaque cote est projetée sous son
+  propre libellé (`mesure.hauteur_capot`) au lieu d'être perdue ou rangée de
+  travers. Ni migration, ni régression : sans pages transmises, la projection
+  est exactement celle d'avant.
+- **Calibration des seuils** (`0b7ec0b`) : on ne calibre pas une confiance avec
+  des confiances. Le seuil est une confiance réellement observée face au sort
+  réel du champ ; faute de preuves, aucun seuil n'est publié.
+- **Réutilisation** (`46d13aa`) : une cible explicite, et une réponse même avec
+  trois fiches — « données insuffisantes » plutôt qu'un score inventé.
+- **Lisibilité** (`cb70b52`, `7c18bdf`) : filtres déroulants lisibles en mode
+  nuit, et un seul bouton pour tout effacer.
+- **Recherche par référence** (`3e5d59e`) : la cause corrigée, pas le symptôme.
+- **Lot 0** (`30d6c39`) : cartographie du corpus, mesurer avant d'écrire.
+
+Mesures : suite locale 2500 passed / 0 échec ; frontend `tsc` propre, 33
+épreuves unitaires, build OK ; CI au lot 2 verte sur 13 jobs avec
+**535 tests PostgreSQL** et 88,15 % de couverture.
+
+**État honnête :** le workflow `Qualification Windows` est rouge — mais il
+l'était **déjà sur `main` avant le premier commit de ce plan**. Son étape
+fautive est le verdict de la suite PostgreSQL + Redis ; les journaux ne sont
+pas lisibles depuis ce banc, et la cause exacte reste à établir sur le runner
+(hypothèse documentée : `postgresql-contrib` absent). Aucune ligne d'écart n'a
+été ajoutée pour le faire taire.
+
 ## 2026-10-29 (suite 7) — la fiche dit pourquoi elle est incomplète
 
 - **`GET /fiches/{code}` renvoie `anomalies`** (code, gravité, message, statut)
@@ -107,7 +222,7 @@ SailPack), le gabarit accessoire accrochait le formulaire et lisait le mot
 corrections :
 
 - `_code_plausible()` : un code de fiche contient **toujours au moins un
-  chiffre** (mesuré : `ST64`, `ST 074b`, `170124CS`, `250821JA`, `ST 508V2`,
+  chiffre** (mesuré : `ST64`, `ST 074b`, `170124CS`, `250106AB`, `ST 508V2`,
   `ST 089` — tous en portent ; aucun code réel n'est fait de lettres seules).
   Appliqué aux 4 points d'écriture du code lus dans le document.
 - Un **formulaire de prise de cotes n'est plus candidat** au rôle de fiche,
@@ -535,7 +650,7 @@ sauvegarde. D reste hors Docker natif, non exécuté.
   (`6,60` → `'6' <-> '60'` — d'où le repli numérique) ; normalisation requête :
   `6,6` / `6.60` / `6,60 m` / `660 cm` / `6600 mm` convergent ; valeur seule →
   toutes cotes ±0,5 % par bornes numériques (tri par écart), `SLU 6,60` → cote
-  nommée ; entier nu sans alias exclu (`2026`, `7792` ne régressent pas) ;
+  nommée ; entier nu sans alias exclu (`2026`, `1042` ne régressent pas) ;
   réponse `dimension_active`. Tests : 38 verts dont perf p95 **15,2 ms**
   (sandbox, < 100 ms) ; rappels 50/50 SYNTHÉTIQUE et 13/13 RÉEL inchangés ;
   garde e2e live portée à 10 (3 validation + 1 badge + 4 Phase 2.2 + 2 dimension).
@@ -574,7 +689,7 @@ sauvegarde. D reste hors Docker natif, non exécuté.
 ## 2026-09-29 — Cycle production-readiness (en cours)
 
 - **CI** : runners épinglés sur `ubuntu-24.04` ; mises à niveau vérifiées des actions officielles (checkout/setup-python/setup-node/upload-artifact/cache/buildx/pnpm) vers les majeures actuellement publiées. Nouveau job `securite-dependances` audite les dépendances Python runtime et frontend production ; seuls les vulnérabilités HIGH/CRITICAL corrigibles font échouer le job, les autres sont annotées.
-- **Confidentialité** : suppression de `7792-SO_ffab.pdf` à la racine ; `tests/test_ocr_etages.py` utilise la copie canonique `sample_data/`. La copie racine partageait SHA-256 `43afc51e…`. Le fichier reste dans l'historique Git, la réduction ne concerne que l'arbre courant. Renforcement du garde-fou : aucun PDF à la racine. Les PDF OCR du répertoire `tests/fixtures/ocr/` sont explicitement des fixtures SYNTHÉTIQUES autorisées, leur génération ne conserve pas systématiquement les octets PDF entre versions d'outils.
+- **Confidentialité** : suppression de `1042-EX_ffab.pdf` à la racine ; `tests/test_ocr_etages.py` utilise la copie canonique `sample_data/`. La copie racine partageait SHA-256 `43afc51e…`. Le fichier reste dans l'historique Git, la réduction ne concerne que l'arbre courant. Renforcement du garde-fou : aucun PDF à la racine. Les PDF OCR du répertoire `tests/fixtures/ocr/` sont explicitement des fixtures SYNTHÉTIQUES autorisées, leur génération ne conserve pas systématiquement les octets PDF entre versions d'outils.
 
 ## 2026-09-29 — Phase 2.2 validation humaine à débit (en cours)
 
@@ -594,7 +709,7 @@ sauvegarde. D reste hors Docker natif, non exécuté.
 
 **Phase 2.1 — les fiches déposées sont cherchables AVANT leur validation (décision commanditaire du 2026-09-29).** Problème de produit le plus risqué à 10 000 PDF : le texte de recherche d'une fiche (`fiche.search_vector`, fonction pondérée A/B/C `rafraichir_texte_recherche_fiche`, migration 007) n'était rempli qu'à la VALIDATION humaine — des milliers de fiches déposées mais non validées étaient invisibles à `/recherche`. Correctif en trois gestes, RG3 **inchangé sur le fond** (rien ne passe à `valide` sans décision humaine ; une fiche `rejete` n'est jamais renvoyée) : (1) `ecrire_fiche` remplit le texte de recherche **dès l'écriture** (`seamtech_search/fiches/persistance.py`) ; (2) **migration `018_recherche_a_valider`** qui rattrape les fiches déjà en base (`SELECT rafraichir_texte_recherche_fiche(id_fiche) FROM fiche WHERE search_vector IS NULL` — aucune table nouvelle, aucune donnée validée touchée, `VERSION_SCHEMA_METIER` → `018_recherche_a_valider`) ; (3) le défaut de `/recherche` et de `rechercher_fiches` **inclut** désormais les `a_valider`, le statut étant TOUJOURS exposé dans chaque résultat (badge interface) ; `inclure_a_valider=false` restreint à l'archive de confiance. L'assistant garde sa propre sémantique (validées seules par défaut : ses réponses sourcées ne doivent pas citer du non vérifié sans le dire).
 
-**Interface (écran Recherche)** : badge **« Non vérifiée »** sur chaque résultat `a_valider` (`data-testid="badge-non-verifiee"`, statut jamais masqué) ; case **« Validées uniquement »** dans la barre latérale (`inclure_a_valider=false`), pastille de filtre actif dédiée, état partageable dans l'URL (`inclure_a_valider=false` déjà dans `FILTRES_CLES`). Nouveau test e2e `frontend/e2e/recherche-badge.spec.ts` sur la fiche `BIS-7792` (a_valider) du seed : présente+badgée par défaut, retirée par le filtre, URL partagée, retour au décochage. `tsc --noEmit` et `pnpm build` verts localement (Next.js 16, production).
+**Interface (écran Recherche)** : badge **« Non vérifiée »** sur chaque résultat `a_valider` (`data-testid="badge-non-verifiee"`, statut jamais masqué) ; case **« Validées uniquement »** dans la barre latérale (`inclure_a_valider=false`), pastille de filtre actif dédiée, état partageable dans l'URL (`inclure_a_valider=false` déjà dans `FILTRES_CLES`). Nouveau test e2e `frontend/e2e/recherche-badge.spec.ts` sur la fiche `BIS-1042-EX` (a_valider) du seed : présente+badgée par défaut, retirée par le filtre, URL partagée, retour au décochage. `tsc --noEmit` et `pnpm build` verts localement (Next.js 16, production).
 
 **Phase 0 — garde-fou de confidentialité des dépôts** : `tests/test_confidentialite_depots.py` (**17 tests**, suite sans service) épingle l'inventaire COMPLET des fichiers documentaires suivis par Git (6 PDF dont 2 fixtures OCR synthétiques explicitement autorisées (4 PDF épinglés), 7 ZIP du corpus réel — tout ajout ou modification d'un PDF/ZIP/`.plx`/`.xin`/`.dxf`/`.db` non épinglé rend la CI rouge ; les formats machine restent interdits en vrac) et interdit tout PDF à la racine (le doublon racine a été supprimé). Complète `test_empreintes_fixtures.py` sans le réécrire. Le PDF réel reste dans l'historique Git et dans sa copie canonique suivie ; seuls l'arbre courant et l'exposition en double sont réduits. Le dépôt reste public selon la décision du commanditaire ; aucun changement de visibilité n'est demandé.
 
@@ -655,11 +770,11 @@ sauvegarde. D reste hors Docker natif, non exécuté.
 **M.2 — Migration 017** : table de staging `ocr_etage3` (`fichier_source`, `empreinte_sha256`, `page`, `texte_ocr`, `confiance`, `moteur`, `version_moteur`, `duree_s`, `page_ocerisee`, `motif`, `horodatage`) avec index empreinte/fichier/page_ocerisee/horodatage. AUCUNE écriture dans `chunk` ni `document` (promotion = Lot G). `VERSION_SCHEMA_METIER = "017_ocr_etage3"` enregistrée dans tuple `MIGRATIONS_METIER` (oubli qui avait cassé sauvegarde au Lot K) et `TABLES_METIER` **32 → 33** (prouvé `python3 -c "from seamtech_search.schema_metier import TABLES_METIER as T; print(len(T))"`).
 
 **M.3 — Règle d'étage prouvée** :
-- PDF texte natif (7792-SO) : ZÉRO page océrisée, texte natif jamais remplacé (test `test_pdf_texte_natif_zero_page_ocerisee` — c'est le test qui porte le garde M.7)
+- PDF texte natif (1042-EX) : ZÉRO page océrisée, texte natif jamais remplacé (test `test_pdf_texte_natif_zero_page_ocerisee` — c'est le test qui porte le garde M.7)
 - PDF scanné : pages sans texte SONT océrisées (si tesseract présent)
 - Fichier déjà traité (même empreinte) : jamais retraité (idempotence, `EtatOCR`)
 - Image isolée (png/jpg/tif) : traitée comme scan d'une page
-- Seuil paramétrable documenté, défaut 20 justifié (7792-SO >200 chars/page, scans 0 char, bruit <10 chars)
+- Seuil paramétrable documenté, défaut 20 justifié (1042-EX >200 chars/page, scans 0 char, bruit <10 chars)
 
 **M.4 — Exécution nocturne** :
 - Verrou : second lancement sort code 2 avec message clair, ne corrompt pas état, ne double pas travail (`test_verrou_second_lancement_refuse_proprement`)
@@ -670,7 +785,7 @@ sauvegarde. D reste hors Docker natif, non exécuté.
 
 **M.5 — Échantillons de test** :
 - 2 PDF scannés commités sous `tests/fixtures/ocr/` : `ocr_propre.pdf` (37 Ko) et `ocr_degrade.pdf` (34 Ko), <150 Ko idéalement, page image SANS couche texte (vérifié 0 char natif via pdfplumber), accompagnés de `generate_fixtures.py` qui les régénère déterministe (`random.seed(42)`, Pillow+reportlab déjà présents, documente commande si binaires absents, ne fait pas échouer suite).
-- Texte source CONNU : `reference_propre.txt` / `reference_degrade.txt` — « SEAMTECH Search / Test OCR propre / Voile grand voile 123 / Client Sailonet chantier Cruette / Reference 7792-SO / Bonjour le monde / SEAMTECH voile technique / 12345 »
+- Texte source CONNU : `reference_propre.txt` / `reference_degrade.txt` — « SEAMTECH Search / Test OCR propre / Voile grand voile 123 / Client Exemplia chantier Demo / Reference 1042-EX / Bonjour le monde / SEAMTECH voile technique / 12345 »
 - Mesure qualité : taux mots retrouvés = mots référence présents dans OCR. Cible ≥0,90 sur propre (test `test_qualite_taux_mots_retrouves_propre`, publié en `::notice title=ocr-qualite::` en CI). Dégradé : mesure publiée même si basse (test `test_qualite_taux_mots_retrouves_degrade_publie`), <0,60 signalé dans limites.
 - Test PDF natif non océrisé = garde M.7.
 
@@ -699,7 +814,7 @@ sauvegarde. D reste hors Docker natif, non exécuté.
 
 **L.2 — comptes nominatifs « qui a validé quoi »** : la table `utilisateur` existait depuis la 006 (`identifiant` UNIQUE, `nom`, `role`, `actif`) mais n'était JAMAIS alimentée, et `fiche_validation.id_utilisateur` / `fiche_champ_extrait.corrige_par` restaient toujours NULL : l'attribution venait du **corps de la requête HTTP** (`corps.get("utilisateur")`), donc du navigateur — n'importe qui pouvait valider au nom d'un autre. Le chemin est REMPLACÉ, pas doublé : `POST /fiches/{code}/corriger|valider|rejeter|rouvrir` et `POST /validation/lot` prennent désormais l'identité des en-têtes `X-SEAMTECH-UTILISATEUR` / `X-SEAMTECH-ROLE`, posés par le proxy Next.js depuis le cookie signé, et honorés **seulement si `X-SEAMTECH-TOKEN` est valide sur la même requête** (sinon 401, et la fiche n'est pas attribuée) ; le champ `utilisateur` du corps n'est plus qu'un repli d'outillage et l'écran ne l'envoie plus. Migration 016 (partie 2) : `ADD COLUMN IF NOT EXISTS` de `empreinte_mot_de_passe`, `mot_de_passe_modifie_le`, `derniere_connexion`, `doit_changer_mot_de_passe` sur `utilisateur` + table `session_ui` (`id_utilisateur` FK, `empreinte_jeton` UNIQUE, `cree_le`, `expire_le`, `derniere_activite`, `revoque_le`, `user_agent`) et index sur `(id_utilisateur)` / `(expire_le)` — **`TABLES_METIER` passe de 31 à exactement 32, sans table supplémentaire** : le compteur d'échecs de connexion (5 échecs / 5 minutes ⇒ 429 pendant 5 minutes) vit dans la table `audit_log` EXISTANTE (`action='connexion_refusee'`, une connexion réussie remet le compteur à zéro), choix documenté dans `docs/API.md` et le runbook. Mots de passe : `scrypt$n=16384$r=8$p=1$<sel_b64>$<hash_b64>`, sel de 16 octets `secrets.token_bytes`, vérification `hmac.compare_digest`, **bibliothèque standard uniquement** ; les jetons de session ne sont stockés que par leur empreinte SHA-256 (un dump ne permet pas de rejouer une session). API : `POST /auth/connexion` (401 identique pour un compte inexistant, 429 verrouillé avec `Retry-After`), `POST /auth/deconnexion` (exige le JETON, pas seulement l'`id_session` devinable, et pose `revoque_le`), `GET /auth/session`, `POST /auth/mot-de-passe`, `GET|POST /auth/utilisateurs` et `…/{identifiant}/desactiver|mot-de-passe` (**gestion réservée au rôle `administrateur`** : 403 pour un opérateur authentifié, 401 sans session ; aucune suppression de compte ni d'historique). Côté front : `/login` demande identifiant + mot de passe, le MÊME cookie HMAC signé est conservé et enrichi (`mode`, `identifiant`, `nom`, `role`, `id_session`, jeton — la v1 partagée est REFUSÉE : accepter un jeton sans identité aurait laissé survivre une session non révocable et non attribuable) ; `lib/backend.ts` ajoute les en-têtes d'attribution et un `requireAuthValide()` qui **confirme la session auprès du backend sur CHAQUE route `app/api/*`** — c'est ce qui rend une déconnexion réellement effective partout et pas seulement sur `/api/auth/session` (mesuré : cookie copié, après déconnexion, `GET /api/validation/file` et `GET /api/search` → 401). CLI `python -m seamtech_search.comptes.cli` + entry point `comptes` : `creer`, `lister`, `desactiver`, `reinitialiser-mot-de-passe`, `sessions`, `revoquer-session`, `verifier` — mot de passe TOUJOURS lu sur STDIN, jamais en argument (`ps`/historique du shell). Indicateur 9 du tableau de bord `taux_par_utilisateur` (actions attribuées / sans utilisateur — l'héritage d'avant L.2 n'est JAMAIS réattribué a posteriori —, part attribuée, détail par compte) affiché sur `/qualite`. Compte de secours conservé : `SEAMTECH_UI_PASSWORD`, identifiant `secours`, rôle `administrateur`, sans ligne en base donc **non révocable et non attribuable** — limite ASSUMÉE, écrite dans `.env.example`, `docs/API.md` et le rapport, à désactiver une fois les comptes nominatifs créés. Garde-fou CI « Garde-fou attribution — ROUGE puis VERT » (sabotage : l'attribution est figée sur un identifiant littéral ; le test ROUGIT sur son ASSERTION — `attribution = 1 (attendu 2)` — et non sur une erreur SQL, vérifié localement AVANT d'écrire l'étape).
 
-**Correctifs de couverture (audit indépendant du 23/09 sur `f5e1016`)** : (C.1) l'indicateur `doublons_detectes` n'avait AUCUN test et `tableau_de_bord()` / `GET /qualite/tableau-de-bord` non plus — cinq tests ajoutés (`test_tableau_de_bord_expose_tous_les_indicateurs_declares` compare l'ENSEMBLE EXACT des clés à `CLES_TABLEAU_DE_BORD` — 9 après L.2 —, `test_doublons_detectes_compte_vraiment` et `test_doublons_detectes_sans_doublon` pour les valeurs, `test_route_tableau_de_bord` pour la route, `test_taux_par_utilisateur_expose_les_actions_sans_utilisateur` pour l'indicateur L.2) et la règle de maintenance est écrite dans `docs/API.md` : tout nouvel indicateur arrive avec sa clé dans le test de forme, son test de valeurs et sa ligne de doc ; (C.2) aucune spec Playwright ne regardait le bandeau de doublon — `frontend/e2e/doublons.spec.ts` le vérifie sur `/validation` en conditions réelles (le seed live ajoute la fiche `BIS-7792` partageant le PDF de `7792-SO` (renommée depuis `7792-SO-BIS` : son code contenait celui de la fiche d'origine, si bien qu'une sélection de ligne par texte matchait DEUX lignes de la file — les specs sélectionnent maintenant par `data-code` EXACT) puis lance le scan) et échoue si un contrôle de fusion apparaît ; (C.3) `docs/API.md` documente désormais les routes L.1, les routes `/auth/*`, la frontière de confiance, le verrouillage en `audit_log` et les 9 indicateurs.
+**Correctifs de couverture (audit indépendant du 23/09 sur `f5e1016`)** : (C.1) l'indicateur `doublons_detectes` n'avait AUCUN test et `tableau_de_bord()` / `GET /qualite/tableau-de-bord` non plus — cinq tests ajoutés (`test_tableau_de_bord_expose_tous_les_indicateurs_declares` compare l'ENSEMBLE EXACT des clés à `CLES_TABLEAU_DE_BORD` — 9 après L.2 —, `test_doublons_detectes_compte_vraiment` et `test_doublons_detectes_sans_doublon` pour les valeurs, `test_route_tableau_de_bord` pour la route, `test_taux_par_utilisateur_expose_les_actions_sans_utilisateur` pour l'indicateur L.2) et la règle de maintenance est écrite dans `docs/API.md` : tout nouvel indicateur arrive avec sa clé dans le test de forme, son test de valeurs et sa ligne de doc ; (C.2) aucune spec Playwright ne regardait le bandeau de doublon — `frontend/e2e/doublons.spec.ts` le vérifie sur `/validation` en conditions réelles (le seed live ajoute la fiche `BIS-1042-EX` partageant le PDF de `1042-EX` (renommée depuis `1042-EX-BIS` : son code contenait celui de la fiche d'origine, si bien qu'une sélection de ligne par texte matchait DEUX lignes de la file — les specs sélectionnent maintenant par `data-code` EXACT) puis lance le scan) et échoue si un contrôle de fusion apparaît ; (C.3) `docs/API.md` documente désormais les routes L.1, les routes `/auth/*`, la frontière de confiance, le verrouillage en `audit_log` et les 9 indicateurs.
 
 **Portes** : suite locale 532 passés / 3 sautés ; suite PostgreSQL réelle `-m "postgres and not perf and not sauvegarde"` **190 passés / 1 sauté / 0 échec** (153 de base + 14 dédup + 18 comptes + 5 couverture C.1 — l'arithmétique avait d'abord oublié ces 5 tests, corrigé sur audit indépendant du 23/09) ; `TABLES_METIER` contient **32** tables et `SESSION_UI` y figure ; `ruff check .` propre ; CI 8 jobs verte (4 gardes ROUGE→VERT en annotations) ; e2e live étendu (validation 3 tests, doublons 2, auth nominatif 23) ; RG13 aucune écriture d'archive, RG14 aucun appel réseau.
 
@@ -714,7 +829,7 @@ sauvegarde. D reste hors Docker natif, non exécuté.
 
 **Gabarit depuis exemple (K.2)** : à partir PDF fiche variante inconnue → brouillon (champs, zones page+rectangle, confiance) via `seamtech_search/fiches/gabarit_brouillon.py` (pdfplumber bbox si dispo, fallback texte). Opérateur ajuste dans écran `/gabarits` (`gabarits-app.tsx`), prévisualise PDF via viewer existant (pdf.js local, zones surlignées, pas de ressource externe), enregistre comme nouvelle version dans registre existant `gabarit` + `/gabarits/{code}/versions` (pas registre parallèle). Table `gabarit_brouillon` migration 015 (index qualité + brouillon) — `charger_gabarits()` ne lit que `gabarit WHERE actif`, jamais brouillon. Garde-fou : brouillon NON validé ne sert jamais extraction — test `test_brouillon_ne_sert_jamais_extraction_rouge_vert` prouvé ROUGE (brouillon absent des actifs) puis VERT (après validation présent). Mesure : sur PDF variante fabriqué en modifiant doc référence (jamais doc référence lui-même) — brouillon propose 8/16 champs correctement (ancres guindant/chute/client/code), temps opérateur machine ~2 s génération + ~30 s ajustement.
 
-**Portes** : `pytest -q -m "not postgres"` 532/3 (151 deselected, 2 warnings), sélection CI postgres ≥140/0 (140 avant + 11 nouveaux = 151 attendus), perf 4 mesures nommées seuils (50 requêtes synthétique, 1500 fiches, fonds réel 7792-SO, assistant_jeu_8) + 5e mesure qualite_1000_fiches <100 ms, ruff propre, pip-audit propre, pnpm audit --prod propre, tsc/build verts, `audit_projet.py --rapide` 12/12, CI 8 jobs verte, RG13 aucune écriture dossiers archive (gabarits en base OK), RG14 aucun appel réseau sortant.
+**Portes** : `pytest -q -m "not postgres"` 532/3 (151 deselected, 2 warnings), sélection CI postgres ≥140/0 (140 avant + 11 nouveaux = 151 attendus), perf 4 mesures nommées seuils (50 requêtes synthétique, 1500 fiches, fonds réel 1042-EX, assistant_jeu_8) + 5e mesure qualite_1000_fiches <100 ms, ruff propre, pip-audit propre, pnpm audit --prod propre, tsc/build verts, `audit_projet.py --rapide` 12/12, CI 8 jobs verte, RG13 aucune écriture dossiers archive (gabarits en base OK), RG14 aucun appel réseau sortant.
 
 ## Unreleased — Lot J « recherche façon Google v3.0 §11.4 » : facette dimension, URL partageable, journal exploité (`arena/01a0ca57-seamtech-search`)
 
@@ -769,7 +884,7 @@ valeur inventée, jamais une réponse plausible non sourcée.
   démonstration dans le rapport — repli « plausible » introduit volontairement
   → test ROUGE (« valeur plausible inventée ») ; retiré → VERT.
 - **Mesures (§17.13)** : jeu des 8 questions du commanditaire sur base semée
-  (corpus Lot E synthétique étiqueté + VRAIE fiche 7792-SO par le pipeline
+  (corpus Lot E synthétique étiqueté + VRAIE fiche 1042-EX par le pipeline
   réglé) — réponses rendues dans
   `docs/verite_terrain/RAPPORT_20260922_LOT_I.md` ; p50/p95 mesurés
   (`scripts/mesure_assistant.py` + `test_perf_assistant_jeu_8`, marqueur
@@ -791,15 +906,15 @@ valeur inventée, jamais une réponse plausible non sourcée.
 - **Vérité terrain étendue (74 cibles, 12 familles)** : passage du banc de référence de 31 à 74 cibles
   (cotes 11, jonction 13, galon 12, fiche 11, renfort 9, materiau 8, option 3, finition 3, bateau 1,
   client 1, gamme 1, type_voile 1). Vérification contradictoire intégrale contre le texte extrait du document
-  client réel (`sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf`) : 115 tracées littéralement, 2 dates
+  client réel (`sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf`) : 115 tracées littéralement, 2 dates
   dérivées ISO (2026-03-06 / 06/03/2026), 5 codes internes dont le libellé figure dans le document,
   3 booléens dérivés de « Non » (0 valeur devinée ou inventée).
 - **Branchement sur les bancs de mesure** :
   - `cli banc` : supporte l'exécution autonome (hors base) ou en base PostgreSQL (`gabarit_test`), résultat
     mesuré : **74/74 = 100.0 %** (seuil 90 %).
-  - `validate_extraction.py` : supporte `--verite` au format Python (`VERITE_7792_COMPLETE.py`) et JSON
-    (`7792-SO_ffab_complete.json`) en réutilisant le résolveur existant `_valeur_extraite` de `persistance.py`.
-    Résultat mesuré : **74/74 = 100.0 %**. Rétro-compatibilité 6/6 Phase 0 préservée sur `7792-SO_ffab.json`.
+  - `validate_extraction.py` : supporte `--verite` au format Python (`VERITE_REFERENCE_COMPLETE.py`) et JSON
+    (`1042-EX_ffab_complete.json`) en réutilisant le résolveur existant `_valeur_extraite` de `persistance.py`.
+    Résultat mesuré : **74/74 = 100.0 %**. Rétro-compatibilité 6/6 Phase 0 préservée sur `1042-EX_ffab.json`.
 - **Garde-fou du projet (`scripts/audit_projet.py`)** : outil de contrôle des invariants critiques
   (emplacement de `.github/workflows/ci.yml`, fixture réelle SHA-256 + taille, aucun `except:` aveugle avalé,
   verrou de calibration actif, présence des 8 fichiers de test §17.11, source unique de vérité 74 cibles +
@@ -848,7 +963,7 @@ développeur, minimum d'exploitation.
   commanditaire) ; DECISION_MATERIEL.md (options A/B/C chiffrées, décision au
   commanditaire, chiffres non mesurés écrits « non mesuré »).
 - **Recette humaine prête à exécuter** : docs/verite_terrain/RECETTE_HUMAINE.md
-  — jeu de 3 fiches du dépôt (7792-SO / GENOA champs incertains / 123) +
+  — jeu de 3 fiches du dépôt (1042-EX / GENOA champs incertains / 123) +
   doublon de code par redépôt + cote à corriger (RG11), fiche imprimable en
   6 étapes avec tableau de mesure ; remplit le tableau vide de
   MESURE_VALIDATION_2MIN.md sans le développeur.
@@ -876,7 +991,7 @@ rendre la fusion sûre, corriger le dernier défaut réel, nettoyer.
   ROUGE à 108,8 ms (même SHA vert en pull_request ; étape non instrumentée
   verte sur le même run = non-déterminisme d'environnement, pas une
   régression). Correctif : marqueur `perf` (pyproject) sur les trois mesures
-  de latence (jeu 50 synthétique, 1 500 fiches, fonds réel 7792-SO) ; étape
+  de latence (jeu 50 synthétique, 1 500 fiches, fonds réel 1042-EX) ; étape
   CI dédiée SANS `--cov` qui publie p50/p95/max en `::notice perf-latence`
   (garde-fous : 3 mesures publiées exigées, p95 ≥ 100 ms fait échouer) ;
   couverture désélectionnée `-m "not perf"` ; porte de couverture vérifiée
@@ -923,8 +1038,8 @@ rendre la fusion sûre, corriger le dernier défaut réel, nettoyer.
   restaurée de travers) ; `scripts/etat_sandbox.sh` (HEAD vs origin via
   ls-remote avant tout commit, arbre propre, empreintes affichées) ; README :
   la vérité est sur origin, on ne travaille jamais sans fetch.
-- **Nettoyage effectué le 29/09/2026** : doublon `7792-SO_ffab.pdf` racine vs
-  `sample_data/CLIENT-7792-SO/` (byte-identiques, sha256 43afc51e…, mesuré) —
+- **Nettoyage effectué le 29/09/2026** : doublon `1042-EX_ffab.pdf` racine vs
+  `sample_data/CLIENT-1042-EX/` (byte-identiques, sha256 43afc51e…, mesuré) —
   supprimé de l'arbre courant ; son blob subsiste dans l'historique Git ;
   règle tranchée : un document client ne se versionne pas (archive = source de
   vérité, RG13), le dépôt doit passer privé.
@@ -1007,9 +1122,9 @@ lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à
   `tempfile.mkdtemp` (portable).
 - **L'e2e live exerce désormais la VRAIE fiche** : le seed
   (`frontend/e2e/seed-live-pg.py`) dépose les trois dossiers par le pipeline
-  réel, dont `sample_data/CLIENT-7792-SO` (166 990 o) ; la spec
+  réel, dont `sample_data/CLIENT-1042-EX` (166 990 o) ; la spec
   `validation.spec.ts` est réécrite pour le gabarit v2 — sélection des fiches
-  PAR CODE (l'ordre de file dépend de la confiance minimale : 7792-SO est en
+  PAR CODE (l'ordre de file dépend de la confiance minimale : 1042-EX est en
   tête avec 0,850, mesuré), comptages réels assertés (2 jeux de cotes
   dessin ×6 / finie ×5, 4 matériaux, 3 galons, 4 jonctions, 3 finitions,
   8 options, 3 renforts), valeurs spot mesurées en base le 21/09
@@ -1067,19 +1182,19 @@ lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à
   synthétiques (corpus généré). Les deux sont désormais annoncés comme tels
   dans le code (docstrings) et dans `docs/verite_terrain/JEU_REQUETES_REELLES.md`.
 - **Migration 013 — recherche sur le fonds réel** : le rejeu du jeu de requêtes
-  RÉEL sur la vraie fiche 7792-SO a mesuré deux angles morts du vecteur hérité
-  du Lot E : « cruette » (la raison sociale du client n'était pas agrégée) et
-  « spi sailonet 2026 » (l'année d'édition n'était pas tokenisée). Les deux
+  RÉEL sur la vraie fiche 1042-EX a mesuré deux angles morts du vecteur hérité
+  du Lot E : « demo » (la raison sociale du client n'était pas agrégée) et
+  « spi exemplia 2026 » (l'année d'édition n'était pas tokenisée). Les deux
   valeurs étaient extraites et présentes en base ; `coalesce(c.chantier,'')` et
   `to_char(f.date_edition,'YYYY')` sont ajoutés au texte pondéré (poids B) des
   DEUX fonctions de rafraîchissement (`rafraichir_texte_recherche_fiche` et
   `…_toutes`). Architecture RRF / facettes / A-B-C inchangée.
-- **Mesures sur le fonds réel (21/09)** : la vraie fiche 7792-SO entrée par le
+- **Mesures sur le fonds réel (21/09)** : la vraie fiche 1042-EX entrée par le
   pipeline réglé (extraction gabarit v2 → écriture RG3 → validation) —
   rappel du jeu réel **11/13 avant** la migration 013 (les deux trous ci-dessus),
   **13/13 après**, toutes au rang 1 ; p50 = 7,1 ms, p95 = 7,6 ms ; facettes à
   vide = exactement les 6 valeurs de la fiche (type Spi Asymétrique, client
-  Sailonet, bateau 29er 15', gamme Medium Régate, année 2026, matière
+  Exemplia, bateau 29er 15', gamme Medium Régate, année 2026, matière
   Monofilm K903). Compte rendu complet dans
   `docs/verite_terrain/JEU_REQUETES_REELLES.md`. La montée en charge (50
   requêtes sur plus de fiches, puis les 10 000 fiches réelles) reste à
@@ -1091,14 +1206,14 @@ lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à
   ruff OK ; porte de couverture : 88,1 % global et tous
   les seuils par module respectés.
 
-## Unreleased — Tâche 2 : gabarit portant réglé sur la vraie fiche 7792-SO (`arena/01a0c56d-seamtech-search`)
+## Unreleased — Tâche 2 : gabarit portant réglé sur la vraie fiche 1042-EX (`arena/01a0c56d-seamtech-search`)
 
 - **Fixture remplacée par le document client RÉEL** : la reconstruction 2 483 o
   cède la place au PDF reçu du commanditaire le 21/09 — SHA-256
   `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40`,
   166 990 o, 1 page, 842 × 595 paysage (preuves dans
   `docs/verite_terrain/EMPREINTES.md`) ; la note « RECONSTRUCTION » est retirée
-  de `docs/verite_terrain/7792-SO_ffab.json`.
+  de `docs/verite_terrain/1042-EX_ffab.json`.
 - **Gabarit `FICHE_PORTANT_V1` v2 dans le registre JSONB** (aucune coordonnée
   en dur) : ligne de titre unique (désignation + bateau + client + code rejeté
   à droite), grille de cotes tracée à colonnes alignées (jeux « dessin » et
@@ -1186,7 +1301,7 @@ lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à
   défaut **22 passed / 3 skipped** (validation ignorée sans env) ; e2e live **3 passed** (7,4 s ;
   ≤ 1,3 s par parcours — objectif < 2 min largement tenu) ; §17.14 mesuré côté extraction :
   **7/7 attendus lus = 100 %** (seuil ≥ 90 %). **CORRECTION (audit indépendant du 21/09) :
-  ce 7/7 était mesuré sur la RECONSTRUCTION 2 483 o de la fiche 7792-SO, pas sur le
+  ce 7/7 était mesuré sur la RECONSTRUCTION 2 483 o de la fiche 1042-EX, pas sur le
   document client réel ; sur le document réel, l'audit mesurait 1/6 (16,7 %) avant réglage.
   RE-MESURÉ le 21/09 après réglage du gabarit v2 sur le document réel : 6/6 = 100 %
   (voir section Tâche 2 ci-dessus).** **Avertissement :
@@ -1299,7 +1414,7 @@ lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à
   **0,99 / 0,90 / 0,85** — 0,99 = ancre exacte + valeur intégralement bornée + format entièrement
   consommé (ou texte à borne naturelle) ; troncature par libellé stop → 0,90. Le palier haut dépasse
   le seuil structurel 0,98 : « passage direct » est atteignable par construction (§17.14). Preuves
-  testées : champs parfaitement ancrés ≥ 0,98 ; cotes ≥ 0,95 ; reconstruction 7792 en
+  testées : champs parfaitement ancrés ≥ 0,98 ; cotes ≥ 0,95 ; reconstruction 1042 en
   `passage_direct` aux seuils réels du dépôt. Les renforts passent en famille « matériaux »
   (objets physiques, pas champs structurels).
 - **Constat C — noms de fichiers de test alignés sur le §17.11** : `test_extraction_fiche_reference.py`,
@@ -1325,15 +1440,15 @@ lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à
   `persistance.py` (écriture en UNE transaction, statut `a_valider` — jamais valide, RG11),
   `cli.py` (démo `extraire`/`ecrire`/`init`/`banc`).
 - **Deux gabarits embarqués**, issus du vocabulaire réel des fiches disponibles :
-  `FICHE_PORTANT_V1` (réf. 7792-SO, tableau réglé de cotes) et `FICHE_GENOIS_V1`
+  `FICHE_PORTANT_V1` (réf. 1042-EX, tableau réglé de cotes) et `FICHE_GENOIS_V1`
   (mono-colonne) — le génois est le test de généralisation ; une fiche hors gabarits
   part en reprise complète avec conservation des libellés connus (RG6).
 - **Mesure** : banc hérité `validate_extraction --verite` muni de `--moteur gabarit` :
-  **16,7 % (1/6) → 100 % (6/6)** sur la vérité 7792 (champs hérités) ; le banc
+  **16,7 % (1/6) → 100 % (6/6)** sur la vérité 1042 (champs hérités) ; le banc
   `gabarit_test` (vérité §13 en base, 31 champs nommés dont cotes SLU/SLE/SF/SHW/SPA,
   galons, jonctions, finitions, options, renforts) tourne à 100 % via le CLI `banc`.
   **CORRECTION (audit indépendant du 21/09) : ces taux étaient mesurés sur la
-  RECONSTRUCTION de la fiche 7792-SO (fixture du dépôt), pas sur le document client
+  RECONSTRUCTION de la fiche 1042-EX (fixture du dépôt), pas sur le document client
   réel — sur celui-ci, l'audit mesurait 1/6 (16,7 %) avant réglage. RE-MESURÉ le
   21/09 sur le document réel après réglage du gabarit v2 : 6/6 = 100 % et banc
   31/31 = 100 % (section Tâche 2 ci-dessus) ; les taux sur reconstruction restent
@@ -1348,10 +1463,10 @@ lot (marginal à 8 Go : 2-10 jetons/s en Q4 — plan §17.14 Phase 4 reporté à
   fiche_anomalie ; référentiels client/bateau/type_voile/materiau résolus ou créés.
   PostgreSQL uniquement (§17.1). Aucune dépendance nouvelle.
 - **Jeux de cotes et rôles complets** (complément de périmètre) : le JEU d'une cote vient de sa
-  cible de gabarit (`cotes.dessin.*` autant que `cotes.finie.*` — le gabarit 7792 ne lit que
+  cible de gabarit (`cotes.dessin.*` autant que `cotes.finie.*` — le gabarit 1042 ne lit que
   « finies », la fiche n'imprimant qu'elles) ; `fiche_materiau` alimente le **tissu principal**
   quand le gabarit désigne l'ancre comme matériau réel (démontré sur le génois : « Tissu :
-  Dacron 260 » → `fiche_materiau` rôle `tissu_principal`, la fiche 7792 gardant « Tissu(s) » en
+  Dacron 260 » → `fiche_materiau` rôle `tissu_principal`, la fiche 1042 gardant « Tissu(s) » en
   texte libre — son contenu n'est pas un matériau). Le rôle `cache_insignia` est prêt au même
   titre, sans donnée dans les fiches disponibles.
 - **Tests** : 51 unitaires extraction/normalisation/RG16/routage, 12 live PostgreSQL
@@ -1377,7 +1492,7 @@ CHANGELOG. L'ordre de fusion PR 1 → préparation → correctif → Lot A est i
   (« jonction » du lexique trouve « Jonctions », « epaisseurs » du lexique trouve « Epaisseur 01 » —
   le cas exact de la revue) ; expressions multi-mots toujours exactes ; variante « grand voile »
   (sans trait d'union) ajoutée au lexique, l'entrée avec trait d'union continuant de matcher.
-  Mesure rejouée sur la reconstruction 7792 : **30/45 → 31/45 termes** (gain « Jonctions
+  Mesure rejouée sur la reconstruction 1042 : **30/45 → 31/45 termes** (gain « Jonctions
   horizontales » ; la reconstruction imprime les pluriels — les formes singulières de la fiche
   réelle sont couvertes par les tests unitaires des deux sens).
 - **Points mineurs** : le rapport d'inventaire n'embarque plus de chemin absolu du lexique
@@ -1394,8 +1509,8 @@ CHANGELOG. L'ordre de fusion PR 1 → préparation → correctif → Lot A est i
 - **Contrôle de format** dans `charger_verite` : refuse un fichier incomplet — placeholders (« ... »,
   « à remplir », « todo », « ? », « x »), `attendu` vide ou tout-null. Un rapport de calibration bâti
   sur une vérité partielle serait trompeur. Les clés `_documentation` sont ignorées (métadonnées).
-- **Fiche de référence n°2** — `docs/verite_terrain/7792-SO_ffab.json` : valeurs attendues du §13 du
-  plan v3.0 pour la fixture `sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf` (reconstruction ; le
+- **Fiche de référence n°2** — `docs/verite_terrain/1042-EX_ffab.json` : valeurs attendues du §13 du
+  plan v3.0 pour la fixture `sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf` (reconstruction ; le
   PDF réel la remplacera sans changer le JSON). Mesure baseline au banc (`--verite`) :
   **16,7 % de champs corrects (1/6), 84 ms** — la justification chiffrée du lot B (les motifs hérités
   lisent la quantité, ratent la référence réelle, bavent sur la matière, ignorent les cotes nommées).
@@ -1403,7 +1518,7 @@ CHANGELOG. L'ordre de fusion PR 1 → préparation → correctif → Lot A est i
   0,98 ; cotes 0,95 + contrôle croisé RG16 ; matériaux 0,85 ; finitions/options 0,80 ; notes 0,50),
   routage des trois voies. État honnête : PRÉPARÉ, NON CONSOMMÉ — le lot B les chargera (variable
   `SEAMTECH_SEUILS_CONFIANCE`) et les calibrera sur fiches réelles.
-- **6 nouveaux tests** (contrôle de format, template refusé, vérité 7792 mesurable de bout en bout).
+- **6 nouveaux tests** (contrôle de format, template refusé, vérité 1042 mesurable de bout en bout).
 
 ## Unreleased — Phase 0 (inventaire de l'archive & banc d'essai d'extraction)
 
@@ -1418,13 +1533,13 @@ Branche `phase0/inventaire-banc-essai` sur `4efe2ad`. Rapport complet : `docs/PH
 - **Lexique configurable (`config/lexique_fiches.json`, nouveau ; `seamtech_search/lexique.py`)** — le
   vocabulaire n'est plus codé en dur ; ajout à chaud sans redéploiement (`--lexique` pour un chemin
   alternatif), échec bruyant si le fichier est absent/invalide. Vocabulaire de départ bâti sur les
-  fiches disponibles (fixture CLIENT-123, reconstruction 7792-SO §13, fiche génois).
+  fiches disponibles (fixture CLIENT-123, reconstruction 1042-EX §13, fiche génois).
 - **Double vue de l'inventaire** — `scripts/inventaire_archive.py` rapporte (a) la classification
   actuelle, (b) la détection structurelle, plus la section `desaccords` (documents ratés par le
   classifieur actuel ; fiches sans structure détectable). CSV : colonnes `candidat_fiche`, `score_fiche`.
 - **Empreintes de gabarit en positions relatives à la page** (pas de 2 %) quand les dimensions sont
   connues : un même gabarit sur deux formats de page reste dans la même famille.
-- **Fixtures** — `sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf` (reconstruction des valeurs §13 du
+- **Fixtures** — `sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf` (reconstruction des valeurs §13 du
   plan, documentée comme telle) et `sample_data/CLIENT-GENOA/fiche-genois.pdf` (reproduction du point
   mort : classée `plan_pdf` par le classifieur, candidate par la détection).
 - **15 nouveaux tests** (`tests/test_detection_fiches.py`) ; suite complète 313 passés / 9 ignorés ;

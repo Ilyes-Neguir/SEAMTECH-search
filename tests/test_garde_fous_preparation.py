@@ -210,6 +210,13 @@ EXCEPTIONS_RG14: dict[str, str] = {
         "défaut), déclenché uniquement par la commande opérateur "
         "« deposer-arborescence » ; aucun appel sortant au runtime de l'application"
     ),
+    "scripts/verification_manuelle.py": (
+        "outil de VÉRIFICATION MANUELLE : client HTTP volontaire contre une "
+        "instance que l'opérateur a lui-même lancée (127.0.0.1 par défaut, "
+        "surchargeable par --base). C'est tout l'objet du script — il n'est "
+        "exécuté que sur commande explicite et n'est importé par aucun module "
+        "de l'application"
+    ),
     "seamtech_search/cli.py": (
         "même commande opérateur « deposer-arborescence » : valeur PAR DÉFAUT de "
         "--url-api pointant sur l'API locale (http://127.0.0.1:8000), surchargeable ; "
@@ -233,6 +240,12 @@ EXCEPTIONS_RG14: dict[str, str] = {
         "de dépendance externe, jamais d'en créer une. Jamais importé par le service ; "
         "cible loopback. Documenté dans docs/DEPLOYMENT.md"
     ),
+    "scripts/recette_routes.py": (
+        "outil de RECETTE : il sonde une application DÉJÀ démarrée, par HTTP, "
+        "pour observer ce qu'elle répond réellement — c'est son objet. Aucun "
+        "appel sortant vers un tiers : la cible est un paramètre (--base-url), "
+        "jamais une adresse inscrite dans le code"
+    ),
     "scripts/qualification_native_controles.py": (
         "client HTTP d'ESSAI d'installation native (outillage, jamais importé par "
         "le service) : les CONTROLE PASS/FAIL prouvent le parcours réel via l'API "
@@ -253,10 +266,12 @@ DOCS_MARQUEURS_EXCEPTIONS = {
     "scripts/audit_dependency_policy.py": "RG14_EXCEPTION",
     "scripts/recette_verif.py": "RG14_EXCEPTION",
     "scripts/verifier_hors_ligne.py": "RG14_EXCEPTION",
+    "scripts/recette_routes.py": "RG14_EXCEPTION",
     "scripts/qualification_native_controles.py": "RG14_EXCEPTION",
     "scripts/sync_ecc_skills.py": "RG14_EXCEPTION",
     "seamtech_search/fiches/arborescence.py": "RG14_EXCEPTION",
     "seamtech_search/cli.py": "RG14_EXCEPTION",
+    "scripts/verification_manuelle.py": "RG14_EXCEPTION",
 }
 
 

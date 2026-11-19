@@ -13,7 +13,7 @@ module isolé :
 * les contrôles géométriques restent indépendants de la confiance ;
 * l'écriture est idempotente dans ``sail_extractions`` et suit les
   transactions existantes d'écriture de fiche et de dépôt ;
-* le rapport d'or CLI mesure séparément la vérité historique 7792 (74
+* le rapport d'or CLI mesure séparément la vérité historique 1042 (74
   cibles) et les champs normalisés du Lot 3a, avec échec réel sous le seuil.
 """
 
@@ -47,7 +47,7 @@ from seamtech_search.fiches.modeles import (
     Materiau,
     Zone,
 )
-from seamtech_search.fiches.verite_7792 import VERITE_7792
+from seamtech_search.fiches.verite_reference import VERITE_REFERENCE
 from seamtech_search.schema_metier import (
     MIGRATIONS_METIER,
     SQL_028_SAIL_EXTRACTIONS,
@@ -56,12 +56,12 @@ from seamtech_search.schema_metier import (
 )
 
 RACINE = Path(__file__).resolve().parent.parent
-PDF_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+PDF_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 PDF_GENOIS = RACINE / "sample_data/CLIENT-GENOA/fiche-genois.pdf"
 SCRIPT_RAPPORT_OR = RACINE / "scripts/rapport_extraction_or.py"
 
-ATTENDU_7792_LOT3A: dict[str, object] = {
-    "code_fiche": "7792-SO",
+ATTENDU_REFERENCE_LOT3A: dict[str, object] = {
+    "code_fiche": "1042-EX",
     "type_voile": "Spi Asymétrique",
     "gamme": "Medium Régate",
     "modele_bateau_brut": "29er (15')",
@@ -96,8 +96,8 @@ ATTENDU_GENOIS_LOT3A: dict[str, object] = {
 
 
 @pytest.fixture(scope="module")
-def extraction_7792():
-    return extraire_voile_avec_fiche(PDF_7792)
+def extraction_reference():
+    return extraire_voile_avec_fiche(PDF_REFERENCE)
 
 
 @pytest.fixture(scope="module")
@@ -212,10 +212,10 @@ def test_migration_028_sail_extractions_sans_resolution_bateau() -> None:
     # la résolution vit dans les migrations suivantes (SQL_029+), pas dans
     # la 028 — le contrat 3a « aucune résolution bateau » reste prouvé sur
     # le SQL de la 028 lui-même.
-    assert VERSION_SCHEMA_METIER == "031_accessoires"
+    assert VERSION_SCHEMA_METIER == "033_verdicts_revue"
     assert dict(MIGRATIONS_METIER)["028_sail_extractions"] == SQL_028_SAIL_EXTRACTIONS
     assert "sail_extractions" in TABLES_METIER
-    assert len(TABLES_METIER) == 46
+    assert len(TABLES_METIER) == 47  # 033 : verdict_revue (verdicts humains, Lot 10)
 
     sql = SQL_028_SAIL_EXTRACTIONS
     assert "CREATE TABLE IF NOT EXISTS sail_extractions" in sql
@@ -473,13 +473,13 @@ def test_designation_inconnue_et_taille_textuelle_sans_trace() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_pdf_7792_reel_extraction_normalisee_et_or_74_cibles(extraction_7792) -> None:
-    fiche, extraction = extraction_7792
+def test_pdf_reference_reel_extraction_normalisee_et_or_74_cibles(extraction_reference) -> None:
+    fiche, extraction = extraction_reference
 
-    empreinte = hashlib.sha256(PDF_7792.read_bytes()).hexdigest()
+    empreinte = hashlib.sha256(PDF_REFERENCE.read_bytes()).hexdigest()
     assert extraction.empreinte_sha256 == empreinte
-    assert extraction.nom_fichier_source == PDF_7792.name
-    assert extraction.code_fiche == "7792-SO"
+    assert extraction.nom_fichier_source == PDF_REFERENCE.name
+    assert extraction.code_fiche == "1042-EX"
     assert extraction.modele_bateau_brut == "29er (15')"
     assert extraction.taille_bateau_brute == "15'"
     assert extraction.type_voile == "Spi Asymétrique"
@@ -502,12 +502,12 @@ def test_pdf_7792_reel_extraction_normalisee_et_or_74_cibles(extraction_7792) ->
     assert 0.0 <= float(slu.confiance or 0.0) <= 1.0
     assert slu.page == 0 and slu.zone is not None
 
-    rapport_lot3a = evaluer_extraction_or(extraction, ATTENDU_7792_LOT3A)
-    assert rapport_lot3a["total"] == len(ATTENDU_7792_LOT3A)
-    assert rapport_lot3a["corrects"] == len(ATTENDU_7792_LOT3A)
+    rapport_lot3a = evaluer_extraction_or(extraction, ATTENDU_REFERENCE_LOT3A)
+    assert rapport_lot3a["total"] == len(ATTENDU_REFERENCE_LOT3A)
+    assert rapport_lot3a["corrects"] == len(ATTENDU_REFERENCE_LOT3A)
     assert rapport_lot3a["taux"] == pytest.approx(1.0)
 
-    rapport_fiche = evaluer_extraction_or(extraction, VERITE_7792, fiche=fiche)
+    rapport_fiche = evaluer_extraction_or(extraction, VERITE_REFERENCE, fiche=fiche)
     assert rapport_fiche["total"] == 74
     assert rapport_fiche["corrects"] == 74
     assert rapport_fiche["taux"] == pytest.approx(1.0)
@@ -576,12 +576,12 @@ def test_cli_rapport_or_par_defaut_json_100_pourcent() -> None:
     assert rapport["resume"]["taux"] == pytest.approx(1.0)
 
     echantillons = {echantillon["nom"]: echantillon for echantillon in rapport["echantillons"]}
-    assert {"7792-SO", "GENOIS-SYNTHETIQUE"} <= set(echantillons)
-    assert echantillons["7792-SO"]["evaluation_lot3a"]["taux"] == pytest.approx(1.0)
-    assert echantillons["7792-SO"]["evaluation_fiche"]["total"] == 74
-    assert echantillons["7792-SO"]["evaluation_fiche"]["taux"] == pytest.approx(1.0)
+    assert {"1042-EX", "GENOIS-SYNTHETIQUE"} <= set(echantillons)
+    assert echantillons["1042-EX"]["evaluation_lot3a"]["taux"] == pytest.approx(1.0)
+    assert echantillons["1042-EX"]["evaluation_fiche"]["total"] == 74
+    assert echantillons["1042-EX"]["evaluation_fiche"]["taux"] == pytest.approx(1.0)
     assert echantillons["GENOIS-SYNTHETIQUE"]["evaluation_lot3a"]["taux"] == pytest.approx(1.0)
-    assert "/" not in echantillons["7792-SO"]["nom_fichier"]
+    assert "/" not in echantillons["1042-EX"]["nom_fichier"]
 
 
 def test_cli_rapport_or_pdf_sans_attendu_ne_fabrique_pas_de_taux() -> None:

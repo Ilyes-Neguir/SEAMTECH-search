@@ -224,7 +224,7 @@ Inventaire fichier par fichier du diff cumulé depuis le commit de base `a7ffe7d
 |---|---|
 | `.github/workflows/ci.yml` | Ubuntu 24.04 runners, verified action versions, CI/dependency-policy updates. |
 | `.github/workflows/scale-bench.yml` | Bounded optional 10k synthetic PostgreSQL benchmark, targeted PR trigger, diagnostics and artifact upload. |
-| `7792-SO_ffab.pdf` | Removed duplicate root copy; canonical fixture retained. |
+| `1042-EX_ffab.pdf` | Removed duplicate root copy; canonical fixture retained. |
 | `scripts/audit_dependency_policy.py` | Runtime pip / production pnpm audit policy. |
 | `scripts/scale_bench.py` | Synthetic data seed, endpoint percentiles and EXPLAIN. |
 | `docs/benchmarks/scale-bench-synthetique-36594937291.json`, `.md` | Reconstructed synthetic result JSON and complete top-3 EXPLAIN output from this run's compressed GitHub annotations. |

@@ -43,7 +43,7 @@ from ..flux_bornes import lire_par_blocs
 
 # Seuil par défaut : en dessous de 20 caractères, la page est considérée
 # sans texte exploitable. Justification :
-# - La vraie fiche 7792-SO (texte natif) : chaque page > 200 caractères
+# - La vraie fiche 1042-EX (texte natif) : chaque page > 200 caractères
 # - Les scans d'archive (échantillons tests/fixtures/ocr/) : 0 caractère natif
 # - Un numéro de page isolé ou un artefact fait typiquement < 10 caractères
 # Donc 20 est une marge sûre entre bruit et contenu réel.

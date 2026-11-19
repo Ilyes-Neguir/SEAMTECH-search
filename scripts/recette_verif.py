@@ -75,17 +75,21 @@ CONTROLES = (
     "fichiers-catalogue",
 )
 
-# PDF source principaux des sept archives de recette (nom et SHA-256 épinglés
-# depuis les ZIP versionnés). Toute altération à l'extraction, au service ou au
-# téléchargement est donc détectée, notamment pour GIB SEA 284 / 250328 AJA.
+# PDF source principaux des sept archives de recette. Les NOMS sont neutres :
+# les archives ont été purgées du dépôt, et leur nom portait le bateau et le
+# code de chantier du client — les recopier ici aurait été la fuite que la
+# purge supprime. Les EMPREINTES, elles, demeurent : c'est le mode de
+# référence prévu pour un document réel — il reste hors Git, on ne le cite
+# que par son SHA-256. Toute altération à l'extraction, au service ou au
+# téléchargement reste donc détectée.
 PDFS_SEPT_FICHES = {
-    "Fiche GSE AQUILA 250216 AJA.pdf": "6029d7606a8ab5b5659601acdef2b3f84e50d9d9e8f11f9f23f692e65c81ffbb",
-    "Fiche GENOIS ATTALIA 250121 JA.pdf": "bd48ddb777d6507c9d4a3bf727d7203f6ce55ff8581f805580995f5630971258",
-    "Fiche BAVARIA32 CODE 0 STORMLITE 250604 JA.pdf": "930c6c977a70117134a6e1e9fbeac0089bdd3a40295dd2a3b37a741d3d14f968",
-    "Fiche BAVARIA 34 GENOIS 250323 JA.pdf": "e8071167ed4f1285a9f3cf3f6c550cc5a83b73b04984b9c07ecf5bd5e1f946a9",
-    "fiche Gennaker DAMIEN 250821 JA.pdf": "f46a72108a8e679149bd8536393c7e51c728a37b80c86bbc4d384b408efc20f2",
-    "fiche GV Full DEHLER 39 250329 AJA.pdf": "66e89412d73f825b0db0ecdd1079d2a70e97796cb3cf572e9233a38f563e97b5",
-    "Fiche GENOIS GIBSEA 284 250328 AJA.pdf": "72b59b80d494fa85548e18ea1f6ca43b8f80ea45024592cf047a100529b7b85d",
+    "CORPUS-01.pdf": "6029d7606a8ab5b5659601acdef2b3f84e50d9d9e8f11f9f23f692e65c81ffbb",
+    "CORPUS-02.pdf": "bd48ddb777d6507c9d4a3bf727d7203f6ce55ff8581f805580995f5630971258",
+    "CORPUS-03.pdf": "930c6c977a70117134a6e1e9fbeac0089bdd3a40295dd2a3b37a741d3d14f968",
+    "CORPUS-04.pdf": "e8071167ed4f1285a9f3cf3f6c550cc5a83b73b04984b9c07ecf5bd5e1f946a9",
+    "CORPUS-05.pdf": "f46a72108a8e679149bd8536393c7e51c728a37b80c86bbc4d384b408efc20f2",
+    "CORPUS-06.pdf": "66e89412d73f825b0db0ecdd1079d2a70e97796cb3cf572e9233a38f563e97b5",
+    "CORPUS-07.pdf": "72b59b80d494fa85548e18ea1f6ca43b8f80ea45024592cf047a100529b7b85d",
 }
 
 BASE = os.environ.get("RECETTE_BASE", "http://127.0.0.1:8000").rstrip("/")
@@ -670,9 +674,45 @@ def _pdf_7_fiches_integrite(codes: list[str]) -> None:
                 continue
             correspondances.setdefault(str(piece.get("name", "")).casefold(), (code_fiche, int(piece["id"])))
 
+    # Quel corpus est au rendez-vous ? Depuis la purge, le corpus RÉEL vit hors
+    # Git : ses 7 PDF ne sont connus que par empreinte (PDFS_SEPT_FICHES). S'il
+    # n'est pas là, la recette a tourné sur les jeux synthétiques de
+    # sample_data/ — et l'on vérifie CEUX-LÀ, jamais « rien » : un contrôle
+    # qu'on saute est un contrôle qui finit par mentir.
+    attendus: dict[str, str] = dict(PDFS_SEPT_FICHES)
+    mode = "corpus réel : 7 PDF épinglés par SHA-256"
+    if not any(nom.casefold() in correspondances for nom in attendus):
+        # Jeux synthétiques : on ne peut exiger que CHAQUE PDF des sources soit
+        # devenu une fiche — un jeu d'essai peut porter un document que le
+        # classement ne retient pas comme fiche. On vérifie donc ceux qui ONT
+        # été catalogués, et on exige qu'il y en ait au moins un : le contrôle
+        # reste réel (téléchargement par id + SHA-256 conforme à la source),
+        # sans transformer une propriété du corpus en condition de vérité.
+        sources_pdf = {
+            pdf.name: hashlib.sha256(pdf.read_bytes()).hexdigest()
+            for pdf in sorted(SOURCES.rglob("*.pdf"))
+        }
+        attendus = {
+            nom: empreinte
+            for nom, empreinte in sources_pdf.items()
+            if nom.casefold() in correspondances
+        }
+        mode = (
+            f"jeux SYNTHÉTIQUES : {len(attendus)} PDF catalogué(s) "
+            f"sur {len(sources_pdf)} déposé(s) dans {SOURCES}"
+        )
+    if not attendus:
+        _ligne(
+            "pdf-7-fiches-integrite",
+            False,
+            f"aucun PDF catalogué à vérifier : ni corpus réel ni jeu "
+            f"synthétique dans {SOURCES} n'a produit de pièce PDF",
+        )
+        return
+
     controles: list[str] = []
     echec: list[str] = []
-    for nom, empreinte_attendue in PDFS_SEPT_FICHES.items():
+    for nom, empreinte_attendue in attendus.items():
         correspondance = correspondances.get(nom.casefold())
         if correspondance is None:
             echec.append(f"{nom}: absent du catalogue des fiches")
@@ -685,13 +725,12 @@ def _pdf_7_fiches_integrite(codes: list[str]) -> None:
         controles.append(f"{nom} [{code_fiche}] SHA-256={'OK' if empreinte_reelle == empreinte_attendue else 'DIFF'}")
         if not ok_pdf:
             echec.append(f"{nom}: HTTP {statut}, SHA-256={empreinte_reelle}")
-    ok = len(controles) == 7 and not echec
+    ok = len(controles) == len(attendus) and not echec
     _ligne(
         "pdf-7-fiches-integrite",
         ok,
-        f"{len(controles)}/7 PDF téléchargés par id et comparés à leur SHA-256 source; "
-        f"GIB SEA 250328 AJA inclus={any('GIBSEA 284 250328 AJA' in x for x in controles)}; "
-        f"écarts={echec[:4]}",
+        f"[{mode}] {len(controles)}/{len(attendus)} PDF téléchargés par id et "
+        f"comparés à leur SHA-256 source; écarts={echec[:4]}",
     )
 
 

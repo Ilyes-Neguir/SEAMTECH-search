@@ -315,17 +315,17 @@ def test_fiche_structurale_pivotee_conserve_tous_les_champs_et_zones(tmp_path: P
     from seamtech_search.fiches.extraction import extraire_fiche
     from seamtech_search.fiches.gabarits import GABARITS_EMBARQUES
 
-    source = Path(__file__).resolve().parent.parent / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+    source = Path(__file__).resolve().parent.parent / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
     pivot = _transformer(source, tmp_path / "fiche.pdf", lambda w: [p.rotate(angle) for p in w.pages])
     initiale = extraire_fiche(source, gabarits=list(GABARITS_EMBARQUES))
     obtenue = extraire_fiche(pivot, gabarits=list(GABARITS_EMBARQUES))
     champs_initiaux = {(c.champ, c.rang): c for c in initiale.tous_les_champs()}
     champs_pivotes = {(c.champ, c.rang): c for c in obtenue.tous_les_champs()}
-    from seamtech_search.fiches.persistance import VERITE_7792, evaluer_verite
+    from seamtech_search.fiches.persistance import VERITE_REFERENCE, evaluer_verite
 
     assert len(champs_initiaux) == 48
-    assert len(VERITE_7792) == 74
-    assert evaluer_verite(obtenue, VERITE_7792)[0] == 1.0
+    assert len(VERITE_REFERENCE) == 74
+    assert evaluer_verite(obtenue, VERITE_REFERENCE)[0] == 1.0
     assert champs_pivotes.keys() == champs_initiaux.keys()
     with pdfplumber.open(source) as pdf:
         largeur, hauteur = pdf.pages[0].width, pdf.pages[0].height

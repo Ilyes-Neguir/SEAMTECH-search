@@ -96,9 +96,12 @@ def test_migrations_sur_base_vide(base_metier: dict[str, Any]) -> None:
     # (028 : sail_extractions — Lot 3a) = 41, puis +2 (029 :
     # extraction_corrections, extraction_motifs_appris — Lot 3b) = 43,
     # puis +1 (030 : evaluations_confiance — Lot 5) = 44, puis +2 (031 :
-    # accessory_extractions, accessory_corrections — Lot 7) = 46.
+    # accessory_extractions, accessory_corrections — Lot 7) = 46, puis +1
+    # (033 : verdict_revue — verdicts humains de revue, Lot 10) = 47.
     # La 024 est un marqueur sans DDL pour les sessions Redis du Lot 0a.
-    assert len(schema_metier.TABLES_METIER) == 46
+    # La 032 est une migration de la couche documents, pas du schéma métier :
+    # elle n'ajoute rien ici.
+    assert len(schema_metier.TABLES_METIER) == 47
     print(f"\n[mesure] migrations 006-009 sur base vide : {base_metier['duree_migrations_s']:.2f} s")
 
 
@@ -123,8 +126,15 @@ def test_idempotence_rejeu_sans_erreur(base_metier: dict[str, Any]) -> None:
             nb_tables = int(cursor.fetchone()[0])
     assert apres == avant
     # pg_tables ne compte pas les vues (v_fiche_recherche, v_qualite).
-    # 46 métier (44 après 030 + extractions/corrections accessoires en 031) + 6 héritées = 52
-    assert nb_tables == len(schema_metier.TABLES_METIER) + len(TABLES_HERITEES) == 52
+    # 47 métier (44 après 030 + extractions/corrections accessoires en 031
+    # + verdict_revue en 033) + 6 héritées = 53.
+    #
+    # Ce compte est un GARDE-FOU, pas une formalité : quand la migration 033 a
+    # été ajoutée sans inscrire sa table dans ``TABLES_METIER``, c'est CETTE
+    # ligne qui a rompu (backend 3.13 rouge). Elle dit « toute table créée par
+    # une migration doit être déclarée dans le registre » — ce qui permet de
+    # vérifier ensuite qu'aucune ne manque après migration.
+    assert nb_tables == len(schema_metier.TABLES_METIER) + len(TABLES_HERITEES) == 53
 
 
 @pytest.mark.postgres
@@ -153,7 +163,7 @@ def test_insertion_fiche_vue_recherche_et_rafraichissement(base_metier: dict[str
 
     with index.connect() as connection:
         with connection.cursor() as cursor:
-            cursor.execute("INSERT INTO client (nom, chantier) VALUES ('Sailonet', 'Cruette') RETURNING id_client")
+            cursor.execute("INSERT INTO client (nom, chantier) VALUES ('Exemplia', 'Demo') RETURNING id_client")
             id_client = cursor.fetchone()[0]
             cursor.execute("INSERT INTO bateau (nom, taille) VALUES ('29er', '15''') RETURNING id_bateau")
             id_bateau = cursor.fetchone()[0]
@@ -176,12 +186,12 @@ def test_insertion_fiche_vue_recherche_et_rafraichissement(base_metier: dict[str
 
             cursor.execute("SELECT champs_texte, search_vector FROM fiche WHERE id_fiche = %s", (id_fiche,))
             champs_texte, vecteur = cursor.fetchone()
-            assert "Sailonet" in champs_texte and "29er" in champs_texte
+            assert "Exemplia" in champs_texte and "29er" in champs_texte
             assert vecteur is not None and str(vecteur) != ""
 
             cursor.execute("SELECT code, client, bateau, slu_m FROM v_fiche_recherche WHERE id_fiche = %s", (id_fiche,))
             ligne = cursor.fetchone()
-            assert ligne[0] == code and ligne[1] == "Sailonet" and "29er" in ligne[2]
+            assert ligne[0] == code and ligne[1] == "Exemplia" and "29er" in ligne[2]
             assert float(ligne[3]) == 6.60
 
             cursor.execute("SELECT passage_direct, nb_champs_corriges FROM v_qualite WHERE id_fiche = %s", (id_fiche,))

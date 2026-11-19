@@ -249,6 +249,13 @@ def test_scan_et_suppression_pg_preservent_document_capture_sans_objet(base_rech
 
 
 def test_rebuild_pg_sans_fiche_preserve_capture_sans_objet(tmp_path: Path):
+    # Ce test fabrique sa base lui-même au lieu d'employer la fixture
+    # ``base_recherche`` ; il lui faut donc la même garde d'ignorance. Sans
+    # elle, une session sans base PostgreSQL voyait ce test ÉCHOUER sur une
+    # « URL PostgreSQL de test invalide » au lieu d'être ignoré — un bruit qui
+    # masque les vraies régressions.
+    if not os.environ.get("SEAMTECH_TEST_DATABASE_URL"):
+        pytest.skip("Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests")
     from seamtech_search.indexer import SearchIndex
     from tests.conftest import _creer_base_jetable, _supprimer_base_jetable
 

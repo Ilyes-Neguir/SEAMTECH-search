@@ -75,10 +75,13 @@ curl -s -H "X-SEAMTECH-TOKEN: <SEAMTECH_AUTH_TOKEN>" http://127.0.0.1:8000/healt
 #    (CLI équivalent : voir docs/API.md — `cli depot`.)
 ```
 
-Sortie attendue : la fiche entre en statut `a_valider` (RG3 : jamais validée
-automatiquement), ses champs extraits sont affichés, son PDF est rendu à
-droite. C'est exactement ce que le job CI `integration` rejoue avec la vraie
-fiche 7792-SO.
+Sortie attendue : la fiche est écrite, ses champs extraits sont affichés, son
+PDF est rendu à droite. Depuis la décision du commanditaire du 2026-11-14, son
+statut dépend de son score : strictement supérieur à 90 % et aucune anomalie
+bloquante ⇒ `valide` d'emblée (auto-validation, qui remplace RG3) ; sinon
+`a_valider`, en attente d'un humain. La fiche 1042-EX score 0,929 : elle est
+auto-validée, et n'entre donc PAS dans la file de validation. C'est ce que le
+job CI `integration` rejoue avec la vraie fiche.
 
 ## 2 bis. Ordre recommandé de mise en service (revue du 2026-10-07)
 
@@ -101,8 +104,8 @@ L'ordre compte : chaque étape suppose la précédente FAITE et VÉRIFIÉE.
    secrets (URL-safe) hors dépôt, volumes et permissions, **archive montée en
    lecture seule**, identités applicative et de sauvegarde **restreintes à leur
    bucket**, exposition réseau limitée (loopback + TLS pour les postes), puis
-   vérifier les **six services** et les **migrations** attendues de la release
-   (constante `VERSION_SCHEMA_METIER`, liste finissant à `021_revision_fiche`).
+   vérifier les **sept services** et les **migrations** attendues de la release
+   (constante `VERSION_SCHEMA_METIER`, liste finissant à `033_verdicts_revue`).
 4. **Pilote réduit représentatif** (dossier réel + cas difficiles : scans anciens,
    doublons, chemins accentués, gros PDF) : chaque fichier comptabilisé, résultats
    de recherche attendus, téléchargement des originaux et des rapports depuis un

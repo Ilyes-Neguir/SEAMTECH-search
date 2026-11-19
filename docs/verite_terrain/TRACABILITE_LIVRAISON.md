@@ -18,7 +18,7 @@ le pull_request du même SHA est vert.
 
 | Affirmation | Commande | Sortie brute | Commit | Statut |
 |---|---|---|---|---|
-| Extraction de la vraie fiche 7792-SO : 6/6 critères Phase 0, 74/74 vérité étendue | `pytest tests/test_validate_extraction_mesure.py -q` + `python scripts/validate_extraction.py sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf --verite docs/verite_terrain/VERITE_7792_COMPLETE.py --moteur gabarit` | 6/6 Phase 0 (voir `docs/verite_terrain/EMPREINTES.md`) ; banc étendu 74/74 champs (100 %) | b49479d → HEAD | ⚠️ démontré une fois (UNE fiche réelle) |
+| Extraction de la vraie fiche 1042-EX : 6/6 critères Phase 0, 74/74 vérité étendue | `pytest tests/test_validate_extraction_mesure.py -q` + `python scripts/validate_extraction.py sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf --verite docs/verite_terrain/VERITE_REFERENCE_COMPLETE.py --moteur gabarit` | 6/6 Phase 0 (voir `docs/verite_terrain/EMPREINTES.md`) ; banc étendu 74/74 champs (100 %) | b49479d → HEAD | ⚠️ démontré une fois (UNE fiche réelle) |
 | 48 champs réels affichés dans l'UI (comptages assertés par famille) | job e2e CI, `frontend/e2e/validation.spec.ts` | « 3 passed » runs 35666837231, 35715783739, 35716412346 | b49479d → 64e090c | ✅ établi (CI, rejoué) |
 | Le gabarit génois est une fixture SYNTHÉTIQUE | `sha256sum sample_data/CLIENT-GENOA/fiche-genois.pdf` | 3c073703e4a8… / 1 584 o | 4efe2adc (main) | ✅ établi (documenté noir sur blanc, jamais présenté comme réel) |
 
@@ -26,7 +26,7 @@ le pull_request du même SHA est vert.
 
 | Affirmation | Commande | Sortie brute | Commit | Statut |
 |---|---|---|---|---|
-| Jeu RÉEL : 13/13 requêtes retrouvent 7792-SO au rang 1 | `pytest -q -m "postgres and not perf" tests/test_recherche_fonds_reel.py` (PostgreSQL + SEAMTECH_TEST_DATABASE_URL) | 13/13 au rang 1 ; fonds = 1 fiche réelle | b49479d | ⚠️ démontré une fois (fonds = UNE fiche ; l'échelle réelle reste à mesurer) |
+| Jeu RÉEL : 13/13 requêtes retrouvent 1042-EX au rang 1 | `pytest -q -m "postgres and not perf" tests/test_recherche_fonds_reel.py` (PostgreSQL + SEAMTECH_TEST_DATABASE_URL) | 13/13 au rang 1 ; fonds = 1 fiche réelle | b49479d | ⚠️ démontré une fois (fonds = UNE fiche ; l'échelle réelle reste à mesurer) |
 | Jeu SYNTHÉTIQUE de référence : 50/50 rappel@10 | `pytest -q -m "postgres and not perf" tests/test_recherche_hybride.py::test_jeu_50_requetes_reference_100_pourcent` | 50/50 ; source trigrammes active sur requête-faute | bf8b98b | ✅ établi (CI, rejoué) |
 | 1 500 fiches : rappel conservé sur l'extrait | `pytest -q -m perf tests/test_recherche_hybride.py::test_charge_modeste_1500_fiches` | 12/12 à mi-échelle | bf8b98b | ✅ établi (CI) — plancher à mi-échelle, PAS une preuve à 10 000 fiches |
 
@@ -35,7 +35,7 @@ le pull_request du même SHA est vert.
 | Affirmation | Commande | Sortie brute | Commit | Statut |
 |---|---|---|---|---|
 | p95 jeu 50 synthétique < 100 ms | étape CI `Run latency criteria` / `pytest -q -m perf` | run local 22/09 : p50 7,44 / p95 10,59 / max 11,04 ms (n=50) ; annotation `perf-latence` en CI | consolidation 22/09 | ✅ établi (étape CI dédiée, publiée en ::notice) |
-| p95 fonds réel (7792-SO) < 100 ms | idem | run local 22/09 : p50 8,22 / p95 9,94 / max 11,42 ms (n=13) | idem | ⚠️ démontré une fois (fonds = 1 fiche) |
+| p95 fonds réel (1042-EX) < 100 ms | idem | run local 22/09 : p50 8,22 / p95 9,94 / max 11,42 ms (n=13) | idem | ⚠️ démontré une fois (fonds = 1 fiche) |
 | p95 à 1 500 fiches < 100 ms | idem | run local 22/09 : p50 18,73 / p95 54,56 / max 54,91 ms (n=12) | idem | ✅ établi (CI) — plancher mi-échelle |
 | p95 recherche vecteurs actifs : repli 9,1→9,4 ms / e5 réel 13,1→27,7 ms | mesures de l'audit indépendant du 22/09 (poids e5 hors de ce sandbox) | publiées CHANGELOG §Lot F, deux colonnes | 5b2df7d | ⚠️ démontré une fois (environnement d'audit) |
 | Coût embeddings : repli 0,6 ms/fiche / e5 réel 12,67 ms/fiche (78,9 fiches/s) | idem | idem | 5b2df7d | ⚠️ démontré une fois (audit) |
@@ -83,7 +83,7 @@ le pull_request du même SHA est vert.
 |---|---|---|---|---|
 | CI 8/8 verte avec sauvegarde, audit_projet et vérité étendue | `gh run view <id>` | run push 35738002767 = success 8/8, run PR 35738011591 = success 8/8 (docker, backend 3.11/3.12/3.13, integration, e2e, frontend, sauvegarde) ; audit_projet 10/10 vert en CI | 13c7d96 | ✅ établi (prouvé en CI) |
 | Porte garde-fou audit_projet | `python3 scripts/audit_projet.py` | 10/10 contrôles verts (10/10 en --rapide) : CI.yml, fixture réelle, 0 except aveugle, calibration, 8 tests §17.11, vérité unique 74 cibles, ré-export docs | 13c7d96 | ✅ établi |
-| Vérité terrain étendue 74 cibles | `python -m seamtech_search.fiches.cli banc sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf` | 74/74 champs corrects (100.0 %) | 76cb9ee → 13c7d96 | ✅ établi |
+| Vérité terrain étendue 74 cibles | `python -m seamtech_search.fiches.cli banc sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf` | 74/74 champs corrects (100.0 %) | 76cb9ee → 13c7d96 | ✅ établi |
 | CI 7/7 verte (historique des consolidations) | `gh run view <id>` | runs 35666837231, 35667273452, 35716412346 = success 7/7 ; run push 35715779367 ROUGE (flake latence sous --cov, corrigé depuis) | 64e090c → consolidation | ✅ établi / flake corrigé, preuve CI en cours |
 | Suite SQLite (défaut) | `pnpm test:e2e` (frontend) | 22 passed / 3 skipped, inchangée | b49479d | ✅ établi (CI) |
 | Comptes pytest avec filtre (mesures locales du 22/09, PostgreSQL 16.2 + pgvector + pg_trgm + unaccent) | voir colonne commande | `-m "not postgres"` = 487/3 · `-k "not postgres"` = 468/3 · `-k "not postgres and not s3"` = 459/2 · `-m "postgres and not perf"` = 112/1 (le saut = test e5 sans poids hors CI ; 113/0 en CI) · `-m postgres` = 115/1 · `-m perf` = 3/0 · `-k "not s3"` = 593/3 | consolidation 22/09 | ✅ établi (rejoué ce jour) |
@@ -182,7 +182,7 @@ pull_request <https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/37606
 | Sauvegarde hors-site réellement VÉRIFIÉE après envoi (MinIO) | job CI `sauvegarde`, annotations `sauvegarde-envoi` | `dump 150038 octets en 0.1 s, archive 2 fichiers, vérifié après envoi : True` (plusieurs dumps, tous `True`). La valeur `False` apparaît pour un scénario SANS client S3 : le code publie `verifiee_apres_envoi: False` dans la branche « sauvegarde locale seule » (`seamtech_search/sauvegarde.py`, l.329) — c'est-à-dire « rien à vérifier après envoi », PAS « vérification échouée ». Une vérification qui échoue, elle, lève `SauvegardeError` (l.294-297) | 67a442a | ✅ établi (CI, MinIO réel) |
 | Restauration réelle dans une base neuve, y compris à l'échelle | job CI `sauvegarde`, annotations `sauvegarde-restauration` | `recherche_test_bf06942c78 restaurée en 0.26 s (15 fiches)` ; `restaur50k_f6f8150a72 restaurée en 0.8 s (50000 fiches)` | 67a442a | ✅ établi (CI) — **essai humain indépendant : PENDING** |
 | Le WEB et un WORKER SÉPARÉ partagent volumes, brouillons, quarantaine et modèles (Docker) | `tests/test_compose_partage_worker.py` (job CI `integration`, `SEAMTECH_INTEGRATION_STRICT=1`) | job vert ; le test vérifie aussi le téléchargement HTTP du rapport **sans redirection** et l'exécution non-root | 67a442a | ✅ établi (CI, Compose réel) |
-| Navigateur réel : parcours complets, comptes nominatifs, doublons | job CI `e2e` (Playwright), annotations | `e2e-auth-nominatif : 26 tests verts (dont 4 sur les comptes nominatifs)` ; `e2e-doublons : 2 tests verts` ; `mesure-phase1 : parcours machine complet de la vraie fiche 7792-SO … 841 ms` | 67a442a | ✅ établi (CI, navigateur réel) |
+| Navigateur réel : parcours complets, comptes nominatifs, doublons | job CI `e2e` (Playwright), annotations | `e2e-auth-nominatif : 26 tests verts (dont 4 sur les comptes nominatifs)` ; `e2e-doublons : 2 tests verts` ; `mesure-phase1 : parcours machine complet de la vraie fiche 1042-EX … 841 ms` | 67a442a | ✅ établi (CI, navigateur réel) |
 | Recette locale « ça marche sur ma machine » de bout en bout | job CI `recette-locale` (`scripts/recette_locale.sh` → `recette_verif.py` dans le conteneur web) | job vert ; contrôle `pdf-presigne` = octets téléchargés identiques (SHA-256) | 67a442a | ✅ établi (CI) |
 | Corpus réel : import des 7 dossiers, OCR par étages, recherche, sauvegarde/restauration | job CI `recette-corpus-reel` | job vert (7 ZIP, MinIO réel, Tesseract fra) | 67a442a | ✅ établi (CI) — relevance humaine sur requêtes réelles : PENDING |
 | Aucun secret dans les réponses de téléchargement | `tests/test_telechargement_navigateur.py` (5 passés) | ni clé, ni secret, ni `X-Amz-Signature`, ni hôte interne dans les en-têtes/octets servis | 57b4804 | ✅ établi |

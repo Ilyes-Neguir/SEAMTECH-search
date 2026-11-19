@@ -4,38 +4,38 @@ import { APPROBATEUR, csrfHeadersForPage, signIn, signInWith } from "./helpers"
 // Contrat 2026-09-29 (production-readiness Phase 2.1) : les fiches A_VALIDER
 // sont cherchables PAR DÉFAUT, badgées « Non vérifiée » ; le filtre « Validées
 // uniquement » (inclure_a_valider=false) les retire. Le statut n'est jamais
-// masqué. Données : le seed crée BIS-7792 (copie a_valider de 7792-SO).
+// masqué. Données : le seed crée BIS-1042 (copie a_valider de 1042-EX).
 
-const CODE_A_VALIDER = "BIS-7792"
-const CODE_VALIDEE = "7792-SO"
+const CODE_A_VALIDER = "BIS-1042"
+const CODE_VALIDEE = "1042-EX"
 
 test.describe("Recherche — badge « Non vérifiée » et archive de confiance", () => {
   // e2e « live » : la recherche de fiches exige PostgreSQL (503 en SQLite) et
-  // BIS-7792 n'existe que dans la base seedée par e2e/seed-live-pg.py.
+  // BIS-1042 n'existe que dans la base seedée par e2e/seed-live-pg.py.
   test.skip(!process.env.SEAMTECH_E2E_DATABASE_URL, "e2e live : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL)")
 
   test("une fiche a_valider sort par défaut, badgée, et disparaît avec « Validées uniquement »", async ({ page }) => {
     await signIn(page)
-    await page.goto("/recherche?q=7792")
+    await page.goto("/recherche?q=1042")
 
     // Par défaut : la fiche a_valider EST présente, avec son badge.
-    // Locator EXACT par code de fiche : une recherche « 7792 » ramène aussi
-    // BIS-7792, dont l'extrait cite le PDF partagé « fiche-7792-SO_ffab.pdf ».
-    // Un filtre `hasText` sur « 7792-SO » désignait donc parfois la ligne
-    // BIS-7792 (a_valider, donc badgée) et faisait échouer l'assertion sur un
+    // Locator EXACT par code de fiche : une recherche « 1042 » ramène aussi
+    // BIS-1042, dont l'extrait cite le PDF partagé « fiche-1042-EX_ffab.pdf ».
+    // Un filtre `hasText` sur « 1042-EX » désignait donc parfois la ligne
+    // BIS-1042 (a_valider, donc badgée) et faisait échouer l'assertion sur un
     // produit correct — constaté le 29/10/2026 en suite complète, invisible en
     // exécution isolée et invisible en CI (spec sautée sans PostgreSQL).
-    const ligneAValider = page.locator('li[data-code="BIS-7792"]')
+    const ligneAValider = page.locator('li[data-code="BIS-1042"]')
     await expect(ligneAValider).toBeVisible({ timeout: 15000 })
     await expect(ligneAValider.getByTestId("badge-non-verifiee")).toBeVisible()
     await expect(ligneAValider).toContainText("Non vérifiée")
 
     // INVARIANT VÉRIFIÉ, pas une hypothèse de seed : le badge affiché doit être
     // EXACTEMENT le statut servi par l'API, pour CHAQUE ligne de résultat.
-    // L'ancienne assertion (« 7792-SO est validée donc sans badge ») reposait sur
-    // une donnée fausse : dans la base e2e, 7792-SO est « a_valider » jusqu'à ce
+    // L'ancienne assertion (« 1042-EX est validée donc sans badge ») reposait sur
+    // une donnée fausse : dans la base e2e, 1042-EX est « a_valider » jusqu'à ce
     // que `validation.spec.ts` la valide. Elle ne passait que parce que le
-    // locator `hasText: "7792-SO"` attrapait une AUTRE ligne (l'extrait du
+    // locator `hasText: "1042-EX"` attrapait une AUTRE ligne (l'extrait du
     // doublon cite le PDF partagé), donc elle ne prouvait rien — constaté le
     // 29/10/2026, invisible en CI (spec sautée sans PostgreSQL).
     // Lecture UNIQUE du DOM : des `expect` répétés sur une liste qui se
@@ -46,7 +46,7 @@ test.describe("Recherche — badge « Non vérifiée » et archive de confiance"
         badge: element.querySelector('[data-testid="badge-non-verifiee"]') !== null,
       })),
     )
-    const reponse = await page.request.get("/api/recherche?q=7792")
+    const reponse = await page.request.get("/api/recherche?q=1042")
     expect(reponse.ok(), "l'API de recherche doit répondre").toBeTruthy()
     const corps = (await reponse.json()) as { resultats: { code: string | null; statut: string }[] }
     const statutsApi = new Map(corps.resultats.filter((f) => f.code).map((f) => [f.code as string, f.statut]))
@@ -57,8 +57,8 @@ test.describe("Recherche — badge « Non vérifiée » et archive de confiance"
         statutsApi.get(ligne.code) === "a_valider",
       )
     }
-    // Dans la base e2e, 7792-SO et BIS-7792 sont TOUTES DEUX « a_valider »
-    // (mesuré : GET /api/recherche?q=7792 → 2 fiches, statut a_valider). Le
+    // Dans la base e2e, 1042-EX et BIS-1042 sont TOUTES DEUX « a_valider »
+    // (mesuré : GET /api/recherche?q=1042 → 2 fiches, statut a_valider). Le
     // contrat « une fiche validée n'a pas de badge » est prouvé par le test
     // suivant, qui valide puis rouvre une vraie fiche — pas par une hypothèse
     // sur le seed.
@@ -132,7 +132,11 @@ test.describe("Recherche — badge « Non vérifiée » et archive de confiance"
     await page.goto("/recherche")
 
     const saisie = page.getByTestId("recherche-saisie")
-    await saisie.fill("77")
+    // Préfixe du code de la fiche de référence semée (1042-EX) : il doit
+    // remonter une suggestion. Anciennement « 77 » — préfixe de l'ancien code
+    // client, purgé ; le laisser aurait fait attendre une suggestion qui ne
+    // pouvait plus venir.
+    await saisie.fill("1042")
     const suggestions = page.getByTestId("recherche-suggestions")
     await expect(suggestions).toBeVisible({ timeout: 15000 })
 

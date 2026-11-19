@@ -15,7 +15,7 @@
 
 - Déposer/indexer un dossier depuis l'interface prévue ; surveiller l'état du lot, les erreurs et l'espace temporaire.
 - Rechercher par texte/code, contrôler le badge **Non vérifiée**, ouvrir le PDF, confirmer/corriger/rejeter avec le clavier et un motif traçable.
-- Une suggestion, un score ou une extraction n'est jamais une validation : l'opérateur décide fiche par fiche (RG3). Ne pas utiliser la validation groupée tant que le verrou de calibration retourne 409.
+- Depuis le 2026-11-14, une fiche dont le score d'extraction dépasse strictement 80 % et qui ne porte aucune anomalie bloquante est **auto-validée à l'arrivée** (règle qui remplace RG3) : elle n'attend plus l'opérateur, et quitte la file de validation. L'opérateur décide de tout le reste, fiche par fiche. Une fiche auto-validée est protégée : pour la reprendre, il faut la rouvrir (`POST /fiches/{code}/rouvrir`). Ne pas utiliser la validation groupée tant que le verrou de calibration retourne 409.
 - Assistant et endpoints ML sont actifs par défaut. Pour un poste à un opérateur, les masquer avec `SEAMTECH_OPTIONAL_FEATURES_ENABLED=false`; recherche et validation restent disponibles.
 - Ne pas modifier ni déplacer les fichiers de l'archive depuis SEAMTECH. Pour arrêter : `docker compose down` (ne pas ajouter `-v` sauf destruction planifiée).
 

@@ -41,9 +41,11 @@ test.describe("validation de bout en bout", () => {
   // Les trois tests s'enchaînent sur la même base e2e (ordre séquentiel garanti
   // au sein d'un describe) : chaque fiche n'est consommée qu'une fois.
   // Le seed (e2e/seed-live-pg.py) dépose trois dossiers via le PIPELINE RÉEL
-  // (depot → extraction gabarit v2 → a_valider, RG3) :
-  //   7792-SO — la VRAIE fiche client (SHA-256 43afc51e…, 842×595 paysage) ;
+  // (depot → extraction gabarit v2 → statut décidé par la règle d'arrivée) :
+  //   1042-EX — la VRAIE fiche client (SHA-256 43afc51e…, 842×595 paysage) ;
   //   0901-MM, 0902-MM — fiches synthétiques (CLIENT-GENOA, CLIENT-E2E-TROIS).
+  // Depuis le 2026-11-14, une fiche au score > 90 % sans anomalie bloquante
+  // est auto-validée : la file de validation ne retient QUE les autres.
 
   test("la file respecte le tri croissant confiance puis code", async ({ page }) => {
     const file = await ouvrirFile(page)
@@ -88,7 +90,7 @@ test.describe("validation de bout en bout", () => {
 
   test("le focus clavier d'un champ surligne sa zone et sa page PDF", async ({ page }) => {
     const file = await ouvrirFile(page)
-    await ouvrirFiche(page, file, "7792-SO")
+    await ouvrirFiche(page, file, "1042-EX")
     const pdf = page.getByTestId("pdf-page")
     await expect(pdf).toHaveText(/\d+ \/ \d+/, { timeout: 15000 })
     const champAvecZone = page.locator('input[data-testid^="champ-"][data-zone="true"]').first()
@@ -174,7 +176,7 @@ test.describe("validation de bout en bout", () => {
   test("le seed dépose trois dossiers et le rejet exige un motif", async ({ page }) => {
     const file = await ouvrirFile(page)
     // Preuve que le pipeline de dépôt a traité les trois dossiers d'exemple.
-    for (const code of ["7792-SO", "0901-MM", "0902-MM"]) {
+    for (const code of ["1042-EX", "0901-MM", "0902-MM"]) {
       await expect(file.locator(`li[data-code="${code}"]`)).toBeVisible()
     }
 
@@ -188,10 +190,10 @@ test.describe("validation de bout en bout", () => {
     await expect(page.getByTestId("message-ok")).toContainText("rejet", { timeout: 10000 })
   })
 
-  test("la vraie fiche 7792-SO : parcours machine complet (< 2 min)", async ({ page }) => {
+  test("la vraie fiche 1042-EX : parcours machine complet (< 2 min)", async ({ page }) => {
     await signInWith(page, APPROBATEUR)
     // Chrono du PARCOURS MACHINE COMPLET — correction de l'audit indépendant
-    // du 22/09 : la fiche 7792-SO est AUTO-SÉLECTIONNÉE à l'arrivée sur la
+    // du 22/09 : la fiche 1042-EX est AUTO-SÉLECTIONNÉE à l'arrivée sur la
     // page (validation-app.tsx sélectionne la première de la file, triée par
     // confiance croissante), donc un chrono démarrant APRÈS ouvrirFile()
     // mesurait un plancher (relecture DOM + deux écritures sur une fiche déjà
@@ -208,7 +210,7 @@ test.describe("validation de bout en bout", () => {
     await file.getByTestId("code-fiche").first().waitFor({ timeout: 10000 })
     // Clic explicite : si l'auto-sélection disparaît un jour, c'est lui qui
     // ouvre réellement la fiche (la charge reste dans la fenêtre de mesure).
-    await ouvrirFiche(page, file, "7792-SO")
+    await ouvrirFiche(page, file, "1042-EX")
     // Le rendu du PDF fait partie de la fenêtre : pdf-page affiche « 1 / … »
     // tant que pdf.js n'a pas chargé le document, puis « 1 / N ».
     await expect(page.getByTestId("pdf-page")).toHaveText(/\d+ \/ \d+/, { timeout: 15000 })
@@ -230,9 +232,9 @@ test.describe("validation de bout en bout", () => {
     for (const [selecteur, attendu] of parFamille) {
       await expect(page.locator(selecteur)).toHaveCount(attendu)
     }
-    // Valeurs spot du document réel (vérité terrain 7792-SO_ffab.json,
+    // Valeurs spot du document réel (vérité terrain 1042-EX_ffab.json,
     // mesurées en base le 21/09 — jamais inventées).
-    await expect(page.getByTestId("champ-fiche.code")).toHaveValue("7792-SO")
+    await expect(page.getByTestId("champ-fiche.code")).toHaveValue("1042-EX")
     await expect(page.getByTestId("champ-cotes.finie.slu_m")).toHaveValue("6.6")
     await expect(page.getByTestId("champ-galon.guindant")).toHaveValue("50.0 mm | 65.0 g/m²")
 
@@ -251,7 +253,7 @@ test.describe("validation de bout en bout", () => {
     const dureeMs = Date.now() - debut
     test.info().annotations.push({
       type: "mesure-phase1",
-      description: `parcours machine complet de la vraie fiche 7792-SO (navigation → fiche ouverte, champs et PDF rendus → correction RG11 → validation) : ${dureeMs} ms ; lecture humaine hors chrono (critère < 120 000 ms)`,
+      description: `parcours machine complet de la vraie fiche 1042-EX (navigation → fiche ouverte, champs et PDF rendus → correction RG11 → validation) : ${dureeMs} ms ; lecture humaine hors chrono (critère < 120 000 ms)`,
     })
     expect(dureeMs).toBeLessThan(120_000)
   })
@@ -332,7 +334,7 @@ test.describe("validation de bout en bout", () => {
   test("validation en lot du reste : verrou de calibration puis acquittement explicite", async ({ page }) => {
     const file = await ouvrirFile(page)
     // Les fiches déjà traitées ont quitté la file (sélection par code EXACT).
-    await expect(file.locator('li[data-code="7792-SO"]')).toHaveCount(0)
+    await expect(file.locator('li[data-code="1042-EX"]')).toHaveCount(0)
     await expect(file.locator('li[data-code="0902-MM"]')).toHaveCount(0)
     // cocher UNIQUEMENT les cases de la file (pas celle de l'acquittement)
     const cases = file.locator('input[type="checkbox"]')

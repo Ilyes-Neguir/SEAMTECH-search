@@ -288,6 +288,53 @@ def test_redelivraison_job_revision_transportee_ne_reimporte_pas(tmp_path: Path)
     assert resultat['duplicate_delivery'] is True
 
 
+def test_redelivraison_d_un_lot_termine_en_revue_n_est_pas_rejouee(tmp_path: Path) -> None:
+    """Un lot DÉJÀ TERMINÉ n'est jamais retraité, même partiellement en échec.
+
+    C'est le défaut que mesurait ``test_file_durable_postgres.py`` : un lot qui
+    finit en « needs_review » (un seul dossier refusé suffit) était, à la
+    redélivrance, renvoyé dans ``_process_lot_task`` — alors qu'un job terminal
+    ne peut plus être revendiqué, le claim ne s'acquérant que sur « pending »
+    ou « running ». Le worker rendait donc « stale_worker » : le message
+    n'était ni acquitté, ni reprogrammé, ni clôturé.
+
+    La règle générale de la garde d'idempotence le reconnaît désormais comme un
+    doublon, sans avoir à connaître la nature de la tâche.
+    """
+    cfg = make_config(tmp_path)
+    idx = make_index(tmp_path / 'index-lot-doublon')
+    etat = {'id_lot': 7, 'statut': 'termine', 'nb_dossiers': 3,
+            'nb_traites': 2, 'nb_echecs': 1, 'dossiers': [],
+            'progression_pct': 100.0}
+    ancien = {'status': 'needs_review', 'result': dict(etat)}
+    charge = {'job_id': 'lot-7', 'kind': 'lot', 'id_lot': 7, 'source_path': str(tmp_path)}
+    with patch('seamtech_search.worker.get_job', return_value=ancien), \
+         patch('seamtech_search.worker._process_lot_task') as traiter_lot:
+        resultat = process_import_task(charge, cfg, idx, redis_store=None)
+    traiter_lot.assert_not_called()
+    assert resultat.get('status') == 'needs_review'
+    assert resultat.get('duplicate_delivery') is True
+    assert resultat.get('result') == etat
+
+
+def test_upload_incomplete_reste_un_etat_a_reprendre_pas_un_doublon() -> None:
+    """``upload_incomplete`` est exclu de la règle des doublons, volontairement.
+
+    Il figure dans ``STATUTS_TERMINAUX`` mais ce n'est pas un état où il n'y a
+    plus rien à faire : c'est un envoi resté en cours qui ATTEND sa reprise.
+    Le traiter en doublon abandonnerait des objets jamais envoyés.
+
+    Le comportement est éprouvé de bout en bout dans
+    ``tests/test_snapshot_import.py`` : un job ``upload_incomplete`` y est
+    redélivré et le second passage DOIT produire un envoi supplémentaire. Ce
+    test verrouille l'intention, pour qu'un nettoyage de la constante ne la
+    supprime pas sans le voir.
+    """
+    from seamtech_search.jobs import STATUTS_DEJA_TRAITES, STATUTS_TERMINAUX
+
+    assert 'upload_incomplete' in STATUTS_TERMINAUX
+    assert 'upload_incomplete' not in STATUTS_DEJA_TRAITES
+
 def test_import_reel_transport_revue_et_redelivraison_sans_double_envoi(tmp_path: Path, monkeypatch) -> None:
     from seamtech_search.jobs import create_job, get_job
     from seamtech_search.storage import S3StorageClient

@@ -49,17 +49,39 @@ type Constat = {
 const constats: Constat[] = []
 
 /**
- * Codes de fiches réellement servis par CE backend, lus sur l'écran de
- * validation (attribut `data-code`). Aucune fixture figée : l'audit porte sur
- * les fiches que l'installation sert vraiment, pas sur des codes inventés.
+ * Codes de fiches réellement servis par CE backend (attribut `data-code`).
+ * Aucune fixture figée : l'audit porte sur les fiches que l'installation sert
+ * vraiment, pas sur des codes inventés.
+ *
+ * La lecture se fait sur la RECHERCHE, plus sur la file de validation. C'est
+ * une correction, pas une préférence : la file de validation ne contient que
+ * les fiches EN ATTENTE, et elle est vide sur une base fraîche — les écrans
+ * `/fiches/[code]` et `/dossier/[code]` n'étaient alors jamais scannés, en
+ * silence, sans qu'aucun décompte global puisse le voir. La recherche, elle,
+ * liste ce que l'installation sert. La file reste en repli.
  */
 async function codesFiches(page: Page): Promise<string[]> {
-  await page.goto("/validation")
-  await page.waitForLoadState("networkidle")
-  const codes = await page.locator("li[data-code]").evaluateAll((elements) =>
-    elements.map((element) => element.getAttribute("data-code") ?? "").filter(Boolean),
-  )
-  return codes.slice(0, 3)
+  const lire = async (route: string): Promise<string[]> => {
+    await page.goto(route)
+    await page.waitForLoadState("load")
+    // Les résultats arrivent APRÈS l'hydratation : la page est « chargée »
+    // bien avant d'être remplie. Sans cette attente, on lit une liste vide et
+    // on conclut à tort qu'aucune fiche n'est servie — ce qui, mesuré en CI,
+    // a laissé les deux écrans de détail hors de l'audit sans que rien ne le
+    // signale. Mieux vaut attendre les lignes que croire la page.
+    try {
+      await page.waitForSelector("li[data-code]", { timeout: 15_000 })
+    } catch {
+      return []
+    }
+    return page.locator("li[data-code]").evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute("data-code") ?? "").filter(Boolean),
+    )
+  }
+
+  const codes = await lire("/recherche")
+  if (codes.length > 0) return codes.slice(0, 3)
+  return (await lire("/validation")).slice(0, 3)
 }
 
 async function scanner(page: Page, ecran: string, role: string): Promise<void> {
@@ -184,7 +206,17 @@ test.describe("Accessibilité axe-core — tous les écrans", () => {
       "rôles canoniques : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL nominatif)",
     )
     await signInWith(page, ADMIN)
-    for (const code of await codesFiches(page)) {
+    const codes = await codesFiches(page)
+    // Une liste vide n'est pas un succès : c'est un audit qui ne scanne rien
+    // et qui se déclare vert. Si l'installation ne sert aucune fiche, les
+    // écrans de détail restent non audités et IL FAUT le voir — c'est
+    // précisément ainsi que /fiches/[code] et /dossier/[code] ont disparu du
+    // bilan sans que le décompte global ne bronche.
+    expect(
+      codes,
+      "aucune fiche servie : les écrans /fiches/[code] et /dossier/[code] ne peuvent pas être audités",
+    ).not.toHaveLength(0)
+    for (const code of codes) {
       const reponse = await page.goto(`/fiches/${encodeURIComponent(code)}`)
       if (reponse && (reponse.status() === 404 || reponse.status() === 403)) continue
       await scanner(page, `/fiches/${code}`, "admin")

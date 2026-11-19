@@ -44,6 +44,7 @@ from typing import Any, Iterator
 
 import pytest
 
+from seamtech_search.fiches import auto_validation
 from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -92,7 +93,7 @@ def _creer_base(prefixe: str) -> dict[str, Any]:
     codes: dict[str, str] = {}
     for nom, source in (
         ("GENOA", RACINE / "sample_data/CLIENT-GENOA/fiche-genois.pdf"),
-        ("SO", RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"),
+        ("SO", RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"),
     ):
         dossier = racine_essai / nom
         dossier.mkdir(parents=True, exist_ok=True)
@@ -130,6 +131,31 @@ def _detruire_base(base: dict[str, Any]) -> None:
             cursor.execute(f'DROP DATABASE IF EXISTS "{base["nom_base"]}"')
     finally:
         admin.close()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def seuil_auto_validation_hors_atteinte() -> Iterator[None]:
+    """Porte le seuil d'auto-validation hors d'atteinte pour TOUT ce module.
+
+    POURQUOI : ce module éprouve un parcours qui part d'une fiche EN
+    ATTENTE humaine (correction, promotion, rejeu, pièces jointes). Depuis
+    l'auto-validation au seuil de 90 % — décision du commanditaire du
+    2026-11-14 — la fiche réelle du corpus score 0,929 et arrive « valide »
+    : RG11 refuse alors correction et re-dépôt, et le module mesurerait ce
+    refus au lieu du parcours qu'il a pour objet.
+
+    Le seuil est porté à 1,0 — inatteignable, la comparaison étant STRICTE
+    — et non contourné par un patch de la fonction : la règle reste celle
+    du produit, seul son réglage change. Portée MODULE et déclarée AVANT
+    la fixture de base : le dépôt a lieu dans cette autre fixture module,
+    un patch de portée fonction s'appliquerait trop tard.
+
+    Ce que ce module ne couvre donc plus est prouvé ailleurs, et
+    explicitement, dans ``tests/test_auto_validation_persistance.py``.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(auto_validation, "SEUIL_AUTO_VALIDATION", 1.0)
+        yield
 
 
 @pytest.fixture(scope="module")

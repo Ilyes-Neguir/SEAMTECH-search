@@ -19,7 +19,12 @@ Contraintes appliquées, toutes testées :
   sont écrites ensemble, ou rien (test_depot_transactionnel).
 - **Un dossier refusé est un RÉSULTAT** : raison explicite (« gabarit inconnu »,
   « aucun PDF », « PDF illisible »), jamais une exception qui tuerait le lot.
-- Statut d'arrivée : ``a_valider`` — jamais valide (RG3, délégué à ecrire_fiche).
+- Statut d'arrivée : décidé par ``ecrire_fiche`` — l'ancienne règle RG3
+  (« jamais valide ») est remplacée par l'auto-validation au seuil de 90 %
+  (décision du commanditaire du 2026-11-14) : score strictement supérieur à
+  0,80 et aucune anomalie bloquante ⇒ la fiche arrive ``valide``. Une fiche
+  ainsi validée est protégée par RG11 : un second dépôt du même dossier est
+  refusé (« dépôt différent refusé sans modification des pièces »).
 """
 
 from __future__ import annotations
@@ -33,8 +38,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from seamtech_search.extractions_voile import lier_extraction_voile_document_curseur
+from seamtech_search.fiches.anomalies import ReferencesConstatees
 from seamtech_search.fiches.extraction import (
     DetectionMixteIndeterminee,
+    PageAnalysee,
     analyser_candidat_fiche,
     analyser_pdf,
     extraire_fiche,
@@ -338,6 +345,9 @@ class PlanDossier:
     #: jointes et listés ici pour l'opérateur.
     autres_fiches: list[Path] = field(default_factory=list)
     fiche_extraite: FicheExtraite | None = field(default=None, repr=False)
+    #: Lot 2 — pages du PDF retenu, analysées une seule fois par le scanner
+    #: et transmises à l'écriture pour la double vérification des cotes.
+    pages_analysees: tuple[PageAnalysee, ...] | None = field(default=None, repr=False)
 
     @property
     def accepte(self) -> bool:
@@ -651,7 +661,7 @@ def _groupes_preuve_fiche(fiche: FicheExtraite) -> set[str]:
 
 #: Référence de fiche dans un NOM DE FICHIER. Deux formes observées dans les
 #: archives de l'atelier : la référence en tête (« ZZ 075a_ffab.pdf ») et la
-#: référence de commande en fin de nom (« fiche GV 250329 AJA.pdf »). Motif
+#: référence de commande en fin de nom (« fiche GV 250107 AB.pdf »). Motif
 #: volontairement étroit : quelques lettres puis 2 à 5 chiffres, avec une
 #: lettre finale facultative. Aucune valeur n'est inventée : sans motif, il
 #: n'y a pas de repli.
@@ -685,7 +695,7 @@ def code_depuis_nom_fichier(nom: str) -> str | None:
 
 #: Référence dans un NOM DE DOSSIER d'affaire. Les archives de l'atelier
 #: nomment le dossier d'une affaire « BATEAU TAILLE RÉFÉRENCE » (« … ST103 »,
-#: « … ST67A ») ou « BATEAU - jjmmaannée initiales » (« … 250821JA »). Ces
+#: « … ST67A ») ou « BATEAU - jjmmaannée initiales » (« … 250106AB »). Ces
 #: dossiers contiennent souvent une fiche dont NI le PDF ni le nom de fichier
 #: ne portent la référence : sans cette source, l'écriture était refusée et le
 #: dossier « ne rentrait pas » alors que sa référence était sous les yeux.
@@ -702,7 +712,7 @@ def code_depuis_nom_dossier(nom: str) -> str | None:
 
     Dernière source de la chaîne (document → fichier → dossier). Motif étroit :
     des lettres puis 2 à 5 chiffres (« ST103 », « ST67A ») ou une date de
-    commande suivie d'initiales (« 250821JA »). Le dernier motif du nom gagne,
+    commande suivie d'initiales (« 250106AB »). Le dernier motif du nom gagne,
     c'est celui qui porte la référence dans la convention de l'atelier.
     """
     candidats = [m.group("code") for m in _RE_CODE_NOM_DOSSIER.finditer(nom)]
@@ -982,6 +992,7 @@ def scanner_dossier(dossier: Path, gabarits: list[GabaritDef]) -> PlanDossier:
     plan.gabarit_code = candidat_choisi.gabarit.code
     plan.score = candidat_choisi.score_detection
     plan.fiche_extraite = candidat_choisi.fiche
+    plan.pages_analysees = candidat_choisi.pages
     # les autres PDF (non reconnus ou seconds) restent des pièces jointes
     plan.pieces.extend(
         FichierDossier(chemin=pdf, role="piece_jointe", taille_octets=pdf.stat().st_size)
@@ -1174,6 +1185,26 @@ def _lier_rejeu_objets(index: Any, id_ligne_precedente: int, id_ligne_courante: 
             cursor.execute(_SQL_LIGNE_MAJ, ("traite", f"deja_traite (lot #{id_lot_precedent})", None, None, len(plan.pieces), id_ligne_courante))
 
 
+def _cles_referentiel_bateaux(connexion: Any) -> set[str] | None:  # noqa: ANN401
+    """Clés normalisées des modèles de bateaux connus (Lot 1.2).
+
+    Rend ``None`` si le référentiel est vide ou illisible : dans ce cas le
+    contrôle ne s'applique pas, ce qui est le comportement voulu et documenté
+    — « il ne devine pas ce qu'il n'a pas reçu ». Un référentiel vide ne doit
+    pas devenir une liste vide qui déclarerait TOUT bateau hors référentiel.
+    """
+    try:
+        from seamtech_search.referentiel_bateaux import charger_cles_modeles
+
+        with connexion.cursor() as curseur:
+            cles = charger_cles_modeles(curseur)
+    except Exception:  # noqa: BLE001 - un référentiel absent n'est pas une panne
+        LOGGER.debug("Référentiel bateaux indisponible : contrôle Lot 1.2 non appliqué.")
+        return None
+    retenues = {str(c["cle"]) for c in cles if c.get("cle")}
+    return retenues or None
+
+
 def deposer_dossier(
     index: Any,
     dossier: Path,
@@ -1328,6 +1359,11 @@ def deposer_dossier(
         # fichier était bien promu. Mesuré sur `ST63`, `ST101`, `ST96`.
         if not fiche_preparee.fichier_source:
             fiche_preparee.fichier_source = Path(plan.pdf_fiche).name
+        # Lot 1.3 : la référence LUE DANS LE DOCUMENT est capturée AVANT le
+        # repli de `reprendre_code_depuis_nom` — sinon le repli écraserait la
+        # valeur du document et les trois sources finiraient toujours d'accord,
+        # ce qui viderait la comparaison de son sens.
+        code_lu_document = (fiche_preparee.code or "").strip() or None
         code_retenu = reprendre_code_depuis_nom(
             fiche_preparee, Path(plan.pdf_fiche), Path(dossier)
         )
@@ -1383,11 +1419,60 @@ def deposer_dossier(
                 categorie_proposee = proposer_categorie(
                     Path(dossier).name, plan.gabarit_code
                 )
+                # Lot 1.3 : les TROIS références du dossier sont comparées ici,
+                # à l'endroit même où la catégorie est proposée — le dépôt est
+                # le seul endroit qui connaît à la fois le document, le nom du
+                # fichier et le nom du dossier.
+                # L'écart est NON BLOQUANT, à dessein : le dossier entre en
+                # base, l'anomalie est visible pour l'approbateur et la fiche
+                # part en « a_valider » (RG3). Aucune source n'est corrigée en
+                # douce : les trois valeurs sont montrées côte à côte.
+                # Lots 1.3 et 1.4 : le contexte des contrôles RG16 est réuni ICI,
+                # à l'endroit même où la catégorie est proposée — le dépôt est le
+                # seul endroit qui connaît à la fois le document, le nom du
+                # fichier, le nom du dossier ET le gabarit retenu.
+                #
+                # 1.3 : les trois références sont comparées ; l'écart est NON
+                # BLOQUANT, le dossier entre en base et la fiche part en
+                # « a_valider » (RG3). Aucune source n'est corrigée en douce :
+                # les trois valeurs sont montrées côte à côte.
+                # 1.4 : les champs attendus sont ceux que le GABARIT déclare
+                # obligatoires — un attendu déclaré, jamais une liste devinée ici.
+                #
+                # Les contrôles sont APPLIQUÉS à l'écriture (Lot 1.5), pas ici :
+                # c'est ce qui les rend obligatoires sur TOUTE voie.
+                gabarit_retenu = next(
+                    (g for g in (gabarits or []) if g.code == fiche.gabarit_code), None
+                )
+                references_constatees = ReferencesConstatees(
+                    document=code_lu_document,
+                    fichier=code_depuis_nom_fichier(Path(plan.pdf_fiche).name),
+                    dossier=code_depuis_nom_dossier(Path(dossier).name),
+                )
                 # ResultatEcriture : la révision qui accompagne le contenu écrit
                 # est publiée au lot (A02) — un dépôt qui REMPLACE une fiche
                 # fait avancer sa révision, et le dépôt le DIT.
+                # Lot 1.2 : le référentiel des modèles connus est TRANSMIS.
+                #
+                # Il ne l'était pas, et le contrôle « bateau hors
+                # référentiel » ne s'exécutait donc jamais : dans
+                # ``_controle_vraisemblance``, la branche est conditionnée à
+                # ``referentiel_bateaux is not None``. L'instrument du Lot 1.2
+                # était livré, raccordé à la fonction, et mort dans le chemin
+                # de dépôt — la voie par laquelle passent toutes les fiches.
+                # Trouvé en mesurant l'apport des instruments (A.3) : le
+                # compteur de cette famille restait à zéro sur les deux
+                # colonnes, avant comme après.
+                referentiel = _cles_referentiel_bateaux(connexion)
                 ecriture = ecrire_fiche_resultat(
-                    index, fiche, connexion=connexion, categorie=categorie_proposee
+                    index,
+                    fiche,
+                    connexion=connexion,
+                    categorie=categorie_proposee,
+                    pages=list(plan.pages_analysees) if plan.pages_analysees else None,
+                    gabarit=gabarit_retenu,
+                    references=references_constatees,
+                    referentiel_bateaux=referentiel,
                 )
                 id_fiche, action = ecriture.id_fiche, ecriture.action
                 revision_fiche = ecriture.revision

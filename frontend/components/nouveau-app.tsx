@@ -402,8 +402,9 @@ function NouveauAppInterne() {
         </h1>
         <p className="mt-1 text-xs text-muted-foreground">
           Le dossier de fabrication (fiche PDF + croquis, plans, photos). La fiche est reconnue et extraite ; les autres
-          fichiers sont rattachés comme pièces jointes (non analysés, RG12). La fiche arrive en <em>a_valider</em> —
-          jamais valide sans décision humaine (RG3). Idempotent : rejouer un dossier ne crée rien.
+          fichiers sont rattachés comme pièces jointes (non analysés, RG12). Depuis le 2026-11-14, une fiche dont le score
+          dépasse 90 % sans anomalie bloquante est <em>validée</em> à l'arrivée ; les autres arrivent en <em>a_valider</em>.
+          Idempotent : rejouer un dossier ne crée rien.
         </p>
       </div>
       <section className="space-y-3 rounded border border-primary/30 bg-primary/5 p-4" data-testid="panneau-televersement-lot">
@@ -601,7 +602,7 @@ function NouveauAppInterne() {
         <input
           value={dossier}
           onChange={(e) => setDossier(e.target.value)}
-          placeholder="/archive/CLIENT-7792-SO"
+          placeholder="/archive/CLIENT-1042-EX"
           className="flex-1 rounded border border-border bg-input px-3 py-2 font-mono text-sm"
           data-testid="champ-dossier"
         />

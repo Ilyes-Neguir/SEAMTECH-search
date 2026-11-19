@@ -1,6 +1,6 @@
 """Traitements d'extraction v1 — tests d'ingénierie SYNTHÉTIQUES.
 
-Depuis le réglage du gabarit v2 sur la vraie fiche 7792-SO (Tâche 2), les
+Depuis le réglage du gabarit v2 sur la vraie fiche 1042-EX (Tâche 2), les
 gestionnaires « mot à mot » de la v1 (``_traiter_galons``, ``_traiter_jonctions``,
 ``_traiter_epaisseurs``… écrits pour la reconstruction) ne s'exécutent plus sur
 le document réel : la v2 lit des grilles tracées. Ils restent pourtant vivants :
@@ -38,17 +38,17 @@ class TestDessinateurV1:
     def test_forme_document_client_nom_le_date(self) -> None:
         fiche = FicheExtraite()
         base = _base("fiche.dessinateur")
-        _traiter_dessinateur(fiche, "Yann le 6 mars 2026", base)
-        assert fiche.dessinateur == "Yann"
+        _traiter_dessinateur(fiche, "Demo le 6 mars 2026", base)
+        assert fiche.dessinateur == "Demo"
         assert fiche.date_dessin == "2026-03-06"
-        assert base.valeur_normalisee == "Yann | 2026-03-06"
+        assert base.valeur_normalisee == "Demo | 2026-03-06"
         assert base.confiance >= 0.85
 
     def test_forme_separateur_point_median(self) -> None:
         fiche = FicheExtraite()
         base = _base("fiche.dessinateur")
-        _traiter_dessinateur(fiche, "Yann · 6 mars 2026", base)
-        assert fiche.dessinateur == "Yann"
+        _traiter_dessinateur(fiche, "Demo · 6 mars 2026", base)
+        assert fiche.dessinateur == "Demo"
         assert fiche.date_dessin == "2026-03-06"
 
     def test_tiret_mesuré_comme_partie_du_nom(self) -> None:
@@ -57,15 +57,15 @@ class TestDessinateurV1:
         # date. Le document réel n'utilise de toute façon pas cette forme.
         fiche = FicheExtraite()
         base = _base("fiche.dessinateur")
-        _traiter_dessinateur(fiche, "Yann - 6 mars 2026", base)
-        assert fiche.dessinateur == "Yann - 6 mars 2026"
+        _traiter_dessinateur(fiche, "Demo - 6 mars 2026", base)
+        assert fiche.dessinateur == "Demo - 6 mars 2026"
         assert fiche.date_dessin is None
 
     def test_sans_date_conserve_le_nom(self) -> None:
         fiche = FicheExtraite()
         base = _base("fiche.dessinateur")
-        _traiter_dessinateur(fiche, "Yann", base)
-        assert fiche.dessinateur == "Yann"
+        _traiter_dessinateur(fiche, "Demo", base)
+        assert fiche.dessinateur == "Demo"
         assert fiche.date_dessin is None
 
     def test_vide_ne_fait_rien(self) -> None:
@@ -79,8 +79,8 @@ class TestFichierSourceV1:
     def test_fichier_et_date_edition(self) -> None:
         fiche = FicheExtraite()
         base = _base("fiche.fichier_source")
-        _traiter_fichier_source(fiche, "7792-SO.xlsm édité le 06/03/2026", base)
-        assert fiche.fichier_source == "7792-SO.xlsm"
+        _traiter_fichier_source(fiche, "1042-EX.xlsm édité le 06/03/2026", base)
+        assert fiche.fichier_source == "1042-EX.xlsm"
         assert fiche.date_edition == "2026-03-06"
         assert base.confiance >= 0.9
 
@@ -226,8 +226,8 @@ class TestEpaisseursV1:
 
     def test_texte_sans_motif_conservé(self) -> None:
         fiche = FicheExtraite()
-        _traiter_epaisseurs(fiche, "Voir avec JFC", _base("materiaux"))
-        assert fiche.materiaux[0].designation == "Voir avec JFC"
+        _traiter_epaisseurs(fiche, "Voir avec ABC", _base("materiaux"))
+        assert fiche.materiaux[0].designation == "Voir avec ABC"
 
 
 class TestNotesV1:

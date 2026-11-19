@@ -114,6 +114,9 @@ INVENTAIRE_S3RVER = {
     "tests/test_restauration_bundle_s3rver.py::test_references_objet_dupliquees_sur_reseau_isole",
     "tests/test_restauration_bundle_s3rver.py::test_s3rver_restauration_objet_refusee_sans_ecraser",
     "tests/test_restauration_bundle_s3rver.py::test_sauvegarde_copie_objet_par_reseau_isole",
+    # Lot 21 : aller-retour du corpus mesuré contre l'émulateur HTTP isolé —
+    # envoi réel, puis restauration avec contrôle d'empreinte.
+    "tests/test_sauvegarde_corpus.py::test_trajet_complet_sur_emulateur_isole",
 }
 # Sondes spécifiquement liées à une vieille version non recommandée, exécutées
 # uniquement sur banc opt-in authentifié ; elles ne sont PAS couvertes en CI.

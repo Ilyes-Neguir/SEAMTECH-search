@@ -278,7 +278,7 @@ def _resoudre_piece(
     #      (le dépôt ne crée pas de fiche_piece_jointe pour le PDF source) ;
     #   4. fiche.fichier_source quand il contient le chemin du document.
     # Ne reconnaître que (0)/(1) rendait le PDF source visible mais
-    # impossible à demander (422), ce que l'e2e Lot 1 a mesuré sur 7792-SO.
+    # impossible à demander (422), ce que l'e2e Lot 1 a mesuré sur 1042-EX.
     curseur.execute(
         "WITH piece AS ("
         "  SELECT id, name, path, path_key, id_fiche FROM documents "

@@ -70,7 +70,7 @@ test.describe("Lot 7 — accessoires", () => {
     await expect(carte.getByTestId("badge-categorie")).toContainText("Accessoire")
     // Le filtre ne garde que la famille : la fiche voile de référence sort
     // (data-code cible les CARTES de résultat, pas les li imbriqués).
-    await expect(page.locator('li[data-code="7792-SO"]')).toHaveCount(0, { timeout: 15000 })
+    await expect(page.locator('li[data-code="1042-EX"]')).toHaveCount(0, { timeout: 15000 })
   })
 
   test("fiche : catégorie relisible avec sa source", async ({ page }) => {

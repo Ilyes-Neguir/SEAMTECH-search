@@ -48,12 +48,64 @@ def test_toutes_les_ecritures_sont_presentes() -> None:
         assert hasattr(persistance, nom), f"{nom} manquant"
 
 
-def test_le_statut_arrivee_est_a_valider_dans_le_code() -> None:
-    """RG3 : le statut d'arrivée est écrit en dur comme a_valider — jamais valide."""
+def test_le_statut_arrivee_vient_de_la_regle_et_non_d_un_litteral() -> None:
+    """Le statut d'arrivée est DÉCIDÉ, plus jamais écrit en dur.
+
+    Anciennement RG3 : le littéral « a_valider » était posé dans le tuple
+    d'insertion, et le test vérifiait sa présence. Depuis l'auto-validation
+    au seuil de 90 % (décision du commanditaire du 2026-11-14), le statut
+    dépend du score et des anomalies : vérifier un littéral n'aurait plus
+    de sens — et en laisser un revenir serait réintroduire une règle
+    concurrente, silencieuse.
+
+    L'invariant qui reste : aucun statut d'arrivée n'est écrit directement,
+    et la promotion à « valide » ne passe QUE par la règle nommée.
+    """
     import inspect
 
-    # ecrire_fiche est une enveloppe fine (lot C : connexion externe) — le littéral
-    # RG3 vit dans le corps réel d'écriture, _ecrire_fiche_dans.
+    # ecrire_fiche est une enveloppe fine (lot C : connexion externe) — la
+    # règle vit dans le corps réel d'écriture, _ecrire_fiche_dans.
     source = inspect.getsource(persistance._ecrire_fiche_dans)
-    assert '"a_valider"' in source or "'a_valider'" in source
-    assert '"valide"' not in source.replace("'valide'", "") or "conservee_validee" in source
+
+    # 1. La règle est bien appelée, et une seule fois.
+    assert source.count("decider_statut_arrivee(") >= 1, (
+        "le statut d'arrivée n'est plus décidé par `decider_statut_arrivee` : "
+        "une écriture directe réintroduirait une règle non tracée"
+    )
+
+    # 2. Dans le tuple d'insertion de la fiche, le statut vient de la
+    #    CONSTANTE NOMMÉE — pas d'un littéral.
+    #    (On ne vérifie pas le fichier entier : « "valide" » y figure
+    #    légitimement dans le garde-fou RG11, qui LIT un statut, et dans
+    #    l'action « conservee_validee ». Seule l'ÉCRITURE du statut
+    #    d'arrivée doit être passée par la règle.)
+    debut = source.index("parametres_fiche = (")
+    fin = source.index(")", source.index("fiche.score_qualite()", debut))
+    insertion = source[debut:fin]
+    assert "STATUT_ATTENTE_HUMAINE" in insertion, (
+        "le statut d'arrivée inséré n'est pas la constante nommée"
+    )
+    for litteral in ('"a_valider"', "'a_valider'", '"valide"', "'valide'"):
+        assert litteral not in insertion, (
+            f"statut « {litteral} » écrit en dur dans l'insertion de la fiche"
+        )
+
+    # 3. La promotion n'existe qu'au travers de l'instruction prévue, qui
+    #    vérifie que la fiche est encore en attente avant de la promouvoir.
+    assert "_SQL_PROMOUVOIR_AUTO" in source
+    assert "STATUT_ATTENTE_HUMAINE" in source
+
+
+def test_la_promotion_refuse_de_s_appliquer_a_une_fiche_deja_validee() -> None:
+    """L'instruction de promotion est conditionnée au statut d'attente.
+
+    Sans ce `AND statut = ...`, une ré-écriture promouvrait une fiche déjà
+    validée par un humain — et RG11 serait contourné par la porte de
+    service.
+    """
+    from seamtech_search.fiches.persistance import _SQL_PROMOUVOIR_AUTO
+
+    assert "AND statut = %s" in _SQL_PROMOUVOIR_AUTO, (
+        "la promotion doit vérifier le statut courant, sinon elle écrase "
+        "une décision humaine"
+    )

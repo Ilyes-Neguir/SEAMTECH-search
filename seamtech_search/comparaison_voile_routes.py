@@ -14,9 +14,11 @@ from typing import Annotated, Any
 from fastapi import Header, HTTPException, Query
 
 from .comparaison_voile import (
+    NB_MAX_FICHES_COMPAREES,
     ComparaisonRefusee,
     candidats_comparaison,
     comparaison_entre,
+    comparaison_entre_plusieurs,
 )
 from .liaison_voile import ExtractionIntrouvable
 from .securite_requetes import exiger_acteur_nominatif
@@ -96,6 +98,50 @@ def enregistrer_routes_comparaison_voile(
         _acteur(token, entete_utilisateur, entete_role, entete_session, entete_jeton)
         try:
             return comparaison_entre(index, a, b)
+        except ExtractionIntrouvable as erreur:
+            raise HTTPException(status_code=404, detail=str(erreur)) from erreur
+        except ComparaisonRefusee as erreur:
+            raise HTTPException(status_code=422, detail=str(erreur)) from erreur
+
+    @app.get("/comparaison-voiles/plusieurs")
+    def route_comparaison_plusieurs(
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+        ids: str = Query(min_length=1, description="Identifiants séparés par des virgules, ex. 12,13,14"),
+        reference: int | None = Query(default=None, ge=1),
+    ) -> dict[str, Any]:
+        """Compare un GROUPE de fiches : attributs à gauche, une colonne par fiche.
+
+        La référence (la colonne à partir de laquelle les écarts sont calculés)
+        est un choix explicite : par défaut la première. Un pourcentage sans
+        cible ne veut rien dire.
+        """
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        _acteur(token, entete_utilisateur, entete_role, entete_session, entete_jeton)
+        try:
+            identifiants = [int(morceau) for morceau in ids.split(",") if morceau.strip()]
+        except ValueError as erreur:
+            raise HTTPException(
+                status_code=422, detail="Le paramètre « ids » doit être une liste d'entiers séparés par des virgules."
+            ) from erreur
+        if not identifiants:
+            raise HTTPException(status_code=422, detail="Le paramètre « ids » est vide.")
+        if len(identifiants) > NB_MAX_FICHES_COMPAREES:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Comparer plus de {NB_MAX_FICHES_COMPAREES} fiches n'est pas lisible : "
+                    "la table est refusée au lieu d'étaler des colonnes que personne ne lit."
+                ),
+            )
+        if any(identifiant < 1 for identifiant in identifiants):
+            raise HTTPException(status_code=422, detail="Les identifiants doivent être des entiers positifs.")
+        try:
+            return comparaison_entre_plusieurs(index, identifiants, id_reference=reference)
         except ExtractionIntrouvable as erreur:
             raise HTTPException(status_code=404, detail=str(erreur)) from erreur
         except ComparaisonRefusee as erreur:

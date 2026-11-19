@@ -1,4 +1,4 @@
-"""Lot B — extraction de la fiche de référence 7792-SO (plan v3.0 §13, §17.11 : nom de fichier imposé).
+"""Lot B — extraction de la fiche de référence 1042-EX (plan v3.0 §13, §17.11 : nom de fichier imposé).
 
 Cible §13 : ≥ 90 % des champs corrects au banc (baseline « avant » : 16,7 %).
 Traçabilité complète : chaque valeur porte méthode, confiance, page et zone.
@@ -18,46 +18,46 @@ from seamtech_search.fiches.gabarits import (
 )
 from seamtech_search.fiches.modeles import Cotes, FicheExtraite
 from seamtech_search.fiches.persistance import (
-    VERITE_7792,
+    VERITE_REFERENCE,
     evaluer_verite,
 )
 
 RACINE = Path(__file__).resolve().parent.parent
-PDF_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+PDF_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 
 
 @pytest.fixture(scope="module")
-def fiche_7792():
+def fiche_reference():
     from seamtech_search.fiches.extraction import extraire_fiche
 
-    return extraire_fiche(PDF_7792, gabarits=list(GABARITS_EMBARQUES))
+    return extraire_fiche(PDF_REFERENCE, gabarits=list(GABARITS_EMBARQUES))
 
 
-class TestFiche7792Verite:
-    def test_taux_superieur_a_90_pourcent(self, fiche_7792: FicheExtraite) -> None:
-        taux, ecarts = evaluer_verite(fiche_7792, VERITE_7792)
+class TestFicheReferenceVerite:
+    def test_taux_superieur_a_90_pourcent(self, fiche_reference: FicheExtraite) -> None:
+        taux, ecarts = evaluer_verite(fiche_reference, VERITE_REFERENCE)
         assert taux >= 0.90, f"taux {taux:.1%} < 90 % : {ecarts}"
 
-    def test_banc_etendu_74_cibles_100_pourcent(self, fiche_7792: FicheExtraite) -> None:
-        taux, ecarts = evaluer_verite(fiche_7792, VERITE_7792)
-        assert len(VERITE_7792) == 74, f"attendu 74 cibles, obtenu {len(VERITE_7792)}"
+    def test_banc_etendu_74_cibles_100_pourcent(self, fiche_reference: FicheExtraite) -> None:
+        taux, ecarts = evaluer_verite(fiche_reference, VERITE_REFERENCE)
+        assert len(VERITE_REFERENCE) == 74, f"attendu 74 cibles, obtenu {len(VERITE_REFERENCE)}"
         assert taux == 1.0, f"taux {taux:.1%} != 100 % : {ecarts}"
         assert not ecarts
 
-    def test_champs_structurels(self, fiche_7792: FicheExtraite) -> None:
-        assert fiche_7792.code == "7792-SO"
-        assert fiche_7792.titre == "Voile de portant"
-        assert fiche_7792.client_nom == "Sailonet"
-        assert fiche_7792.client_chantier == "Cruette"
-        assert fiche_7792.bateau_nom == "29er"
-        assert fiche_7792.bateau_taille == "15'"
-        assert fiche_7792.type_voile_libelle == "Spi Asymétrique"
-        assert fiche_7792.gamme == "Medium Régate"
-        assert fiche_7792.quantite == 1
-        assert fiche_7792.date_dessin == "2026-03-06"
+    def test_champs_structurels(self, fiche_reference: FicheExtraite) -> None:
+        assert fiche_reference.code == "1042-EX"
+        assert fiche_reference.titre == "Voile de portant"
+        assert fiche_reference.client_nom == "Exemplia"
+        assert fiche_reference.client_chantier == "Demo"
+        assert fiche_reference.bateau_nom == "29er"
+        assert fiche_reference.bateau_taille == "15'"
+        assert fiche_reference.type_voile_libelle == "Spi Asymétrique"
+        assert fiche_reference.gamme == "Medium Régate"
+        assert fiche_reference.quantite == 1
+        assert fiche_reference.date_dessin == "2026-03-06"
 
-    def test_cotes_nommees_jeu_finie(self, fiche_7792: FicheExtraite) -> None:
-        finie = next(c for c in fiche_7792.cotes if c.jeu == "finie")
+    def test_cotes_nommees_jeu_finie(self, fiche_reference: FicheExtraite) -> None:
+        finie = next(c for c in fiche_reference.cotes if c.jeu == "finie")
         assert finie.slu_m == 6.6
         assert finie.sle_m == 5.5
         assert finie.sf_m == 3.08
@@ -66,80 +66,80 @@ class TestFiche7792Verite:
         # Le document réel n'imprime têtière/poids QUE sur la ligne
         # « Mesures Dessin » (la ligne « Mesures Finies » ne les porte pas) :
         # la vérité suit le document, pas l'ancienne reconstruction.
-        dessin = next(c for c in fiche_7792.cotes if c.jeu == "dessin")
+        dessin = next(c for c in fiche_reference.cotes if c.jeu == "dessin")
         assert dessin.tetiere_cm == 3.0
         assert dessin.poids_kg == 0.7
 
-    def test_materiaux_epaisseurs(self, fiche_7792: FicheExtraite) -> None:
-        niveau_1 = next(m for m in fiche_7792.materiaux if m.niveau == 1)
+    def test_materiaux_epaisseurs(self, fiche_reference: FicheExtraite) -> None:
+        niveau_1 = next(m for m in fiche_reference.materiaux if m.niveau == 1)
         assert niveau_1.designation == "Monofilm K903"
         assert niveau_1.mesure_mm == 190.0
-        niveau_2 = next(m for m in fiche_7792.materiaux if m.niveau == 2)
+        niveau_2 = next(m for m in fiche_reference.materiaux if m.niveau == 2)
         assert niveau_2.grammage_g_m2 == 270.0
-        niveau_3 = next(m for m in fiche_7792.materiaux if m.niveau == 3)
+        niveau_3 = next(m for m in fiche_reference.materiaux if m.niveau == 3)
         assert niveau_3.designation is None and niveau_3.mesure_mm == 260.0
         assert niveau_3.grammage_g_m2 == 210.0
-        niveau_4 = next(m for m in fiche_7792.materiaux if m.niveau == 4)
+        niveau_4 = next(m for m in fiche_reference.materiaux if m.niveau == 4)
         assert niveau_4.designation is None and niveau_4.mesure_mm == 300.0
         assert niveau_4.grammage_g_m2 == 170.0
 
-    def test_galons_deux_bandes(self, fiche_7792: FicheExtraite) -> None:
-        guindant = next(g for g in fiche_7792.galons if g.bande == "guindant")
+    def test_galons_deux_bandes(self, fiche_reference: FicheExtraite) -> None:
+        guindant = next(g for g in fiche_reference.galons if g.bande == "guindant")
         assert guindant.couleur == "Bleu"
         assert guindant.largeur_mm == 50.0
         assert guindant.matiere == "Nylon" and guindant.grammage_g_m2 == 65.0
         # Le document réel n'imprime que « Galon - Rouge » sur la chute
         # (pas de seconde couleur).
-        chute = next(g for g in fiche_7792.galons if g.bande == "chute")
+        chute = next(g for g in fiche_reference.galons if g.bande == "chute")
         assert chute.couleur == "Rouge" and chute.largeur_mm == 50.0
 
-    def test_jonctions_et_surplus(self, fiche_7792: FicheExtraite) -> None:
-        laizes = next(j for j in fiche_7792.jonctions if j.nature == "laizes")
+    def test_jonctions_et_surplus(self, fiche_reference: FicheExtraite) -> None:
+        laizes = next(j for j in fiche_reference.jonctions if j.nature == "laizes")
         assert (laizes.nb_zigzag, laizes.nb_points, laizes.espacement_mm) == (1, 6, 15.0)
-        horizontale = next(j for j in fiche_7792.jonctions if j.nature == "horizontale")
+        horizontale = next(j for j in fiche_reference.jonctions if j.nature == "horizontale")
         assert (horizontale.nb_zigzag, horizontale.nb_points, horizontale.espacement_mm) == (2, 6, 30.0)
-        surplus = next(j for j in fiche_7792.jonctions if j.nature == "surplus")
+        surplus = next(j for j in fiche_reference.jonctions if j.nature == "surplus")
         assert surplus.surplus == "~"  # RG5 : sans objet, conservé tel quel
 
-    def test_finitions_options_renfort(self, fiche_7792: FicheExtraite) -> None:
-        postes = {f.poste for f in fiche_7792.finitions}
+    def test_finitions_options_renfort(self, fiche_reference: FicheExtraite) -> None:
+        postes = {f.poste for f in fiche_reference.finitions}
         assert postes == {"amure", "ecoute", "drisse"}
-        amure = next(f for f in fiche_7792.finitions if f.poste == "amure")
+        amure = next(f for f in fiche_reference.finitions if f.poste == "amure")
         assert amure.oeillet_type == "SR12" and amure.sangle is False
-        velcro = next(o for o in fiche_7792.options if o.code == "velcro_anti_deroulement")
+        velcro = next(o for o in fiche_reference.options if o.code == "velcro_anti_deroulement")
         assert velcro.valeur_bool is False
-        emagasineur = next(o for o in fiche_7792.options if o.code == "emmagasineur")
+        emagasineur = next(o for o in fiche_reference.options if o.code == "emmagasineur")
         assert emagasineur.valeur_bool is None  # « ~ » : sans objet
-        renfort = fiche_7792.renforts[0]
+        renfort = fiche_reference.renforts[0]
         assert (renfort.quantite, renfort.forme, renfort.diametre_mm) == (2, "œillets", 200.0)
 
-    def test_montage(self, fiche_7792: FicheExtraite) -> None:
-        assert fiche_7792.montage_type == "Collé/Cousu"
-        assert fiche_7792.montage_fil == "V46"
+    def test_montage(self, fiche_reference: FicheExtraite) -> None:
+        assert fiche_reference.montage_type == "Collé/Cousu"
+        assert fiche_reference.montage_fil == "V46"
 
 class TestTracabilite:
     """Le contrat du projet : toute valeur répond « d'où, confiance, où »."""
 
-    def test_chaque_champ_porte_zone_page_et_methode(self, fiche_7792: FicheExtraite) -> None:
-        for champ in fiche_7792.tous_les_champs():
+    def test_chaque_champ_porte_zone_page_et_methode(self, fiche_reference: FicheExtraite) -> None:
+        for champ in fiche_reference.tous_les_champs():
             assert champ.valeur_brute is not None or champ.valeur_normalisee is not None
             assert champ.methode == "gabarit"
             if champ.valeur_normalisee is not None:
                 assert champ.zone is not None, f"{champ.champ} sans zone"
 
-    def test_zone_exploitable(self, fiche_7792: FicheExtraite) -> None:
-        champ_code = next(c for c in fiche_7792.champs if c.champ == "fiche.code")
+    def test_zone_exploitable(self, fiche_reference: FicheExtraite) -> None:
+        champ_code = next(c for c in fiche_reference.champs if c.champ == "fiche.code")
         zone = champ_code.zone.en_dict()
         assert zone["x1"] > zone["x0"] > 0
         assert zone["y1"] > zone["y0"] > 0
         assert zone["page"] == 0
 
-    def test_aucun_doublon_champ_rang(self, fiche_7792: FicheExtraite) -> None:
-        cles = [(c.champ, c.rang) for c in fiche_7792.tous_les_champs()]
+    def test_aucun_doublon_champ_rang(self, fiche_reference: FicheExtraite) -> None:
+        cles = [(c.champ, c.rang) for c in fiche_reference.tous_les_champs()]
         assert len(cles) == len(set(cles))
 
-    def test_confiances_dans_les_limites(self, fiche_7792: FicheExtraite) -> None:
-        for champ in fiche_7792.tous_les_champs():
+    def test_confiances_dans_les_limites(self, fiche_reference: FicheExtraite) -> None:
+        for champ in fiche_reference.tous_les_champs():
             assert 0.0 <= champ.confiance <= 1.0
 
 class TestJeuxDeCotes:
@@ -162,7 +162,7 @@ class TestJeuxDeCotes:
                 )
             ],
         )
-        fiche = extraire_fiche(PDF_7792, gabarits=[gabarit])
+        fiche = extraire_fiche(PDF_REFERENCE, gabarits=[gabarit])
         dessin = next(c for c in fiche.cotes if c.jeu == "dessin")
         assert dessin.slu_m == 6.6
         assert dessin.tetiere_cm == 3.0
@@ -189,25 +189,25 @@ class TestJeuxDeCotes:
 class TestAntiDeriveVerite:
     """Garde anti-dérive : source unique dans le paquet, ré-exportée par docs/."""
 
-    def test_source_unique_paquet_verite_7792(self) -> None:
-        import docs.verite_terrain.VERITE_7792_COMPLETE as v_docs
-        from seamtech_search.fiches import persistance, verite_7792
+    def test_source_unique_paquet_verite_reference(self) -> None:
+        import docs.verite_terrain.VERITE_REFERENCE_COMPLETE as v_docs
+        from seamtech_search.fiches import persistance, verite_reference
 
-        assert len(verite_7792.VERITE_7792) == 74
-        assert len(verite_7792.VERITE_7792_COMPLETE) == 74
-        assert persistance.VERITE_7792 is verite_7792.VERITE_7792
-        assert v_docs.VERITE_7792 is verite_7792.VERITE_7792
-        assert v_docs.VERITE_7792_COMPLETE is verite_7792.VERITE_7792_COMPLETE
+        assert len(verite_reference.VERITE_REFERENCE) == 74
+        assert len(verite_reference.VERITE_REFERENCE_COMPLETE) == 74
+        assert persistance.VERITE_REFERENCE is verite_reference.VERITE_REFERENCE
+        assert v_docs.VERITE_REFERENCE is verite_reference.VERITE_REFERENCE
+        assert v_docs.VERITE_REFERENCE_COMPLETE is verite_reference.VERITE_REFERENCE_COMPLETE
 
-    def test_garde_derive_json_7792_complete(self) -> None:
+    def test_garde_derive_json_reference_complete(self) -> None:
         import json
         from pathlib import Path
 
-        from seamtech_search.fiches.verite_7792 import VERITE_7792
+        from seamtech_search.fiches.verite_reference import VERITE_REFERENCE
 
-        chemin_json = Path(__file__).resolve().parent.parent / "docs/verite_terrain/7792-SO_ffab_complete.json"
+        chemin_json = Path(__file__).resolve().parent.parent / "docs/verite_terrain/1042-EX_ffab_complete.json"
         assert chemin_json.is_file()
         d = json.loads(chemin_json.read_text(encoding="utf-8"))
-        attendu = d["fiche-7792-SO_ffab.pdf"]["attendu"]
-        assert attendu == VERITE_7792, "Dérive détectée entre 7792-SO_ffab_complete.json et la source unique verite_7792.py"
+        attendu = d["fiche-1042-EX_ffab.pdf"]["attendu"]
+        assert attendu == VERITE_REFERENCE, "Dérive détectée entre 1042-EX_ffab_complete.json et la source unique verite_reference.py"
 

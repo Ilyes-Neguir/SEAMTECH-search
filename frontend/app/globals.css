@@ -280,4 +280,27 @@
     border-radius: 2px;
     padding: 0 2px;
   }
+
+  /* -------------------------------------------------------------------
+     Contrôles natifs : listes déroulantes et cases à cocher.
+     -------------------------------------------------------------------
+     Le volet d'une liste déroulante ouverte n'est PAS peint par la page :
+     c'est Windows qui le dessine. Windows suit le thème du SYSTÈME, pas la
+     classe ``.dark`` — en thème nuit le volet reste blanc pendant que les
+     options héritent de l'encre claire du thème. Résultat : du blanc sur du
+     blanc, le filtre est illisible (constaté au poste, 2026-11-05). La
+     palette ne peut rien y faire : elle n'atteint pas ce volet. La seule
+     parade est d'écrire les DEUX couleurs sur ``option``, que le navigateur
+     transmet alors au volet natif. Les cases natives, elles, suivent
+     ``accent-color`` — que la palette ne couvrait pas davantage.
+     ------------------------------------------------------------------- */
+  select option,
+  select optgroup {
+    background-color: var(--popover);
+    color: var(--popover-foreground);
+  }
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--primary);
+  }
 }

@@ -164,3 +164,35 @@ def test_entrainement_refuse_sans_verrou_exclusif(monkeypatch) -> None:
     # Et dès que le verrou existe, la fonction ne refuse plus rien.
     monkeypatch.setattr(routes, "fcntl", object())
     assert routes._exiger_verrou_exclusif() is None
+
+
+def test_le_guide_de_mise_en_service_annonce_la_limite_windows() -> None:
+    """La limite Windows doit être VISIBLE par l'exploitante, pas en commentaire.
+
+    Le produit refuse de tourner sous Python Windows : `dir_fd`, `/proc/self/fd`
+    et `fcntl.flock` n'y existent pas, et il n'existe volontairement aucun mode
+    dégradé (un parcours « à peu près sûr » laisserait croire au confinement).
+    Ce refus, rencontré sans explication, coûte une journée à l'atelier — il
+    doit être annoncé AVANT l'installation, dans le guide qu'on lit en premier.
+
+    Une épreuve qui ne peut pas échouer ne prouve rien : supprimer le
+    paragraphe du guide, et celle-ci échoue.
+    """
+    guide = Path(__file__).resolve().parents[1] / "docs" / "GUIDE_MISE_EN_SERVICE_POSTE.md"
+    texte = guide.read_text(encoding="utf-8")
+
+    for attendu in ("dir_fd", "/proc/self/fd", "flock", "Windows"):
+        assert attendu in texte, (
+            f"le guide de mise en service ne parle pas de {attendu!r} : la "
+            "limite Windows n'est plus annoncée à l'exploitante."
+        )
+    # Le produit REFUSE, il ne dégrade pas : le guide doit le dire.
+    assert "dégradé" in texte or "degrade" in texte, (
+        "le guide doit dire explicitement qu'il n'existe aucun mode dégradé : "
+        "sans cette phrase, quelqu'un cherchera le réglage qui le contourne."
+    )
+    # Et donner le moyen de vérifier soi-même.
+    assert "plateforme import resume" in texte, (
+        "le guide doit donner la commande qui imprime les capacités "
+        "(`seamtech_search.plateforme.resume`)."
+    )

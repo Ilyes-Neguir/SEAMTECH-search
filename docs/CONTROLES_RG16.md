@@ -15,7 +15,7 @@ Référence : triangle quelconque `½ · SLU · SLE`. Le **facteur** lu est
 | Bande acceptée (TOLÉRANCE NOMMÉE) | facteur ∈ **[0,55 ; 1,30]** = [−45 % ; +30 %] |
 | Formule du tableur d'origine (triangle équilatéral) | SPA = (√3/4)·SLU·SLE = 0,433·SLU·SLE → facteur **0,866** |
 | Triangle quelconque | SPA = ½·SLU·SLE → facteur **1,0** |
-| Fiche de référence 7792-SO (valeurs réelles) | SLU 6,60 / SLE 5,50 / SPA 15,71 → facteur **0,8655** (écart −13,4 %) → **accepté** |
+| Fiche de référence 1042-EX (valeurs réelles) | SLU 6,60 / SLE 5,50 / SPA 15,71 → facteur **0,8655** (écart −13,4 %) → **accepté** |
 | Hors bande (exemples figés en test) | SPA = 9,0 (facteur 0,496) ou SPA = 25,4 (facteur 1,40) → `surface_incoherente` (gravité forte) |
 
 Une tolérance de ±5 ou ±10 % signalerait **la fiche de référence elle-même** :
@@ -47,7 +47,7 @@ subissent que les contrôles de plage et d'ordonnancement — documenté, testé
 Le palier 0,99 est **au-dessus du seuil structurel le plus strict** (0,98 dans
 `config/seuils_confiance.json`) : la voie « passage direct » est atteignable
 par construction (§17.14 vise ≥ 50 % de passage direct en Phase 2). Preuve
-bout-en-bout : la reconstruction 7792 passe `passage_direct` aux seuils
+bout-en-bout : la reconstruction 1042 passe `passage_direct` aux seuils
 actuels (`TestPlafondDeConfiance::test_routage_passage_direct_aux_seuils_reels`).
 La **calibration** réelle des seuils reste l'affaire de la Tâche 3 (fiches
 réelles) : les valeurs actuelles sont les points de départ du §10.3.

@@ -121,7 +121,7 @@ variables `:?` manque — c'est voulu.
       `tests/test_garde_fous_preparation.py` §D).
 - [ ] **3.6** Sauvegarde des secrets **hors machine** (coffre / enveloppe scellée) : sans eux,
       une restauration ne redonne pas l'accès.
-- [ ] **3.7** **Décision du commanditaire 2026-09-29 : le dépôt reste public** ; aucune demande de changement de visibilité n'est lancée. Le PDF racine doublon a été retiré, mais la copie canonique client 7792-SO et l'historique Git demeurent publics. **NON MESURÉ** ici : état de révocation de tout ancien jeton GitHub côté propriétaire. Mesure opérateur requise : vérifier les jetons dans les paramètres du compte, sans les copier dans Git ni le chat.
+- [ ] **3.7** **Décision du commanditaire 2026-09-29 : le dépôt reste public** ; aucune demande de changement de visibilité n'est lancée. Le PDF racine doublon a été retiré, mais la copie canonique client 1042-EX et l'historique Git demeurent publics. **NON MESURÉ** ici : état de révocation de tout ancien jeton GitHub côté propriétaire. Mesure opérateur requise : vérifier les jetons dans les paramètres du compte, sans les copier dans Git ni le chat.
 
 ## 4. Lancement Docker
 
@@ -130,13 +130,21 @@ docker compose up -d --build
 docker compose ps
 ```
 
-- [ ] **4.1** **6 services** : `postgres`, `minio`, `redis`, `web` (API), **`worker`**
-      (exécute les imports — service SÉPARÉ, cf. 4.5/7b) et `frontend`.
-- [ ] **4.2** Tous en `running (healthy)` (les healthchecks font foi ; `web` attend
-      `service_healthy` sur les trois autres).
+- [ ] **4.1** **8 services** : `postgres`, `minio`, `redis`, `web` (API), **`worker`**
+      (exécute les imports — service SÉPARÉ, cf. 4.5/7b), `frontend`,
+      **`sauvegarde`** (ajouté en `af31922` — les anciennes révisions de cette
+      liste annonçaient six services, ce qui n'est plus exact) et
+      **`provisionner-extensions`** (Lot 18 : service ONE-SHOT, il crée
+      `unaccent`/`pg_trgm` puis sort en 0. Il n'est donc pas « healthy », il
+      est « exited » — c'est son code de sortie qui fait foi.)
+- [ ] **4.2** Les **7** services pérennes en `running (healthy)` (les healthchecks font
+      foi ; `web` attend `service_healthy` sur les trois autres). Le huitième,
+      `provisionner-extensions`, est one-shot : il doit être `exited (0)`.
 - [ ] **4.3** Ports publiés **en loopback uniquement** : `docker compose ps --format '{{.Name}} {{.Ports}}'`
       ne montre que des `127.0.0.1:…` (garde-fou : `tests/test_compose_hardening.py`).
-- [ ] **4.4** Redémarrage automatique : `restart: unless-stopped` sur les **6** services.
+- [ ] **4.4** Redémarrage automatique : `restart: unless-stopped` sur les **7** services
+      pérennes. `provisionner-extensions` fait exception, et c'est voulu :
+      `restart: "no"`, un service one-shot ne se relance pas.
 
 | 4.5 | **Service `worker` démarré** (exécute les imports) | `docker compose ps worker` | `running` / `healthy` (le healthcheck lance `--verifier`) | |
 | 4.6 | `web` n'exécute PAS d'import | `docker compose exec -T web printenv SEAMTECH_WEB_WORKER_ENABLED` | `false` | |
@@ -152,16 +160,19 @@ il n'y a pas d'étape manuelle, mais il y a une **vérification obligatoire**.
   docker compose exec -T postgres psql -U seamtech -d seamtech_search \
     -c "SELECT version FROM schema_migrations ORDER BY version;"
   ```
-  Attendu : **21 lignes**, de `001_initial` à `021_revision_fiche`.
+  Attendu : **33 lignes**, de `001_initial` à `033_verdicts_revue`. *Mesuré, et
+  non déduit : rejoué sur une base PostgreSQL neuve ; l'union des registres
+  (`indexer.py` : 32 identifiants dont `032`, `schema_metier.py` : 27 dont
+  `029`) donne le même total.*
 - [ ] **5.2** Version métier alignée :
   ```bash
   docker compose exec -T web python -c "from seamtech_search.schema_metier import VERSION_SCHEMA_METIER, TABLES_METIER; print(VERSION_SCHEMA_METIER, len(TABLES_METIER))"
   ```
-  Attendu : `021_revision_fiche 33` (la 021 n'ajoute que la colonne `revision` à
-  `fiche` — verrou optimiste —, aucune table).
+  Attendu : `033_verdicts_revue 47` (47 tables métier, dont `verdict_revue`
+  ajoutée en 033). *Mesuré en exécutant la commande ci-dessus.*
 - [ ] **5.3** Extensions réellement présentes : `/health` renvoie `vector`, `pg_trgm`, `unaccent`.
 - [ ] **5.4** Rejeu sans effet : redémarrer `web` ne rejoue ni ne duplique aucune migration
-      (garde-fou : `test_migrations_sequentielles_001_a_017_sur_base_vide` (identifiant historique conservé ; assertions vérifient `001..021`)).
+      (garde-fou : `test_migrations_sequentielles_001_a_017_sur_base_vide` (identifiant historique conservé ; assertions vérifient `001..033`)).
 
 > Une migration écrite mais **non enregistrée** est l'incident des Lots K puis M : elle
 > fait échouer la sauvegarde (qui exige `VERSION_SCHEMA_METIER` dans `schema_migrations`).
@@ -218,8 +229,8 @@ Utiliser **un dossier de recette**, jamais l'archive réelle (RG13 : l'archive n
 modifie pas, et le jour J passe par `scripts/preflight_archive.py`).
 
 - [ ] **8.1** Interface → écran **Dépôt** → dossier contenant au moins un PDF de fiche
-      (ex. copie de `sample_data/CLIENT-7792-SO/`).
-- [ ] **8.2** La fiche arrive en statut **`a_valider`** (RG3 : jamais validée automatiquement).
+      (ex. copie de `sample_data/CLIENT-1042-EX/`).
+- [ ] **8.2** La fiche arrive en `valide` si son score > 90 % sans anomalie bloquante, en **`a_valider`** sinon (auto-validation — remplace RG3 depuis le 2026-11-14). Vérifier les DEUX cas.
 - [ ] **8.3** Les artefacts sont **dans le bucket** :
   ```bash
   curl -fsS -H "X-SEAMTECH-TOKEN: $SEAMTECH_AUTH_TOKEN" http://127.0.0.1:8000/imports/<id> \
@@ -325,7 +336,9 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
 
 ## 13. Arrêt / redémarrage
 
-- [ ] **13.1** `docker compose stop` puis `docker compose up -d` → **6** services `healthy`.
+- [ ] **13.1** `docker compose stop` puis `docker compose up -d` → **7** services
+      `healthy`, et `provisionner-extensions` en `exited (0)` : il se relance à
+      chaque `up`, sans effet puisqu'il est idempotent.
 - [ ] **13.2** Après redémarrage : `/health` conserve le nombre de documents, les
       `object_key` restent exploitables (garde-fou
       `test_references_objets_survivent_au_redemarrage`), la recherche renvoie les mêmes
@@ -335,6 +348,45 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
 - [ ] **13.4** Redémarrage machine complet (coupure de courant simulée) : même contrôle.
 - [ ] **13.5** Volumes nommés (`postgres-data`, `minio-data`, `redis-data`) intacts :
       `docker volume ls`.
+
+#### 13.4 et 13.5 — non exécutables hors déploiement : risque accepté, et par qui
+
+**Ces deux points ne peuvent pas être levés ici, et il ne faut pas faire
+semblant.** Mesuré dans l'environnement de développement :
+
+| Sonde | Résultat |
+|---|---|
+| `docker`, `podman`, `nerdctl`, `containerd` | **tous absents** |
+| `/var/run/docker.sock` | `No such file or directory` |
+| Démon `127.0.0.1` : 2375 / 2376 | `ConnectionRefusedError` |
+
+Il n'y a donc aucun moteur de conteneurs, aucun démon, et *a fortiori* aucune
+machine à redémarrer. Un point 13.4 coché dans cet environnement serait une
+case cochée sans mesure — c'est-à-dire exactement ce que cette démarche
+interdit.
+
+**Ce qui est établi malgré tout, et qui réduit le risque sans l'annuler** :
+
+- Les trois volumes nommés sont bien déclarés et montés là où les données
+  vivent : `postgres-data:/var/lib/postgresql/data`, `minio-data:/data`,
+  `redis-data:/data`. Vérifié en chargeant `docker-compose.yml`.
+- Les **7** services pérennes (et non 6) portent tous un `healthcheck` et un
+  `restart: unless-stopped` : si le contrôle de 13.4 échoue, ce ne sera pas
+  faute de santé déclarée. Le huitième, `provisionner-extensions`, est
+  one-shot : on le constate à son code de sortie, pas à sa santé (garde-fou :
+  `test_un_service_one_shot_est_attendu_et_jamais_surveille`).
+- La **durabilité des données** face à une coupure est prouvée au niveau
+  applicatif, sans conteneur : un travail tué par `SIGKILL` est retrouvé et
+  mis en quarantaine au démarrage (`test_chaos.py`), et les fichiers déjà
+  importés sont retrouvés **octet pour octet**. Ce qui reste non prouvé est le
+  redémarrage de la *pile*, pas la tenue des données.
+
+**Risque accepté par : l'exploitant qui signe cette liste au moment de la mise
+en service.** Ces deux points relèvent de la recette sur site (§« Mise en
+service »), pas du développement. Ils doivent y être levés **avant** la
+première mise en production, et la signature de la liste vaut acceptation du
+risque pour la période antérieure. Personne d'autre ne peut les lever : ils
+portent sur une machine qui n'existe pas encore dans cet environnement.
 
 ## 14. Contrôle des logs
 
@@ -391,7 +443,7 @@ docker compose exec web python -m seamtech_search.sauvegarde verifier \
       → aucun fichier `MODIFIÉ`/`PERDU`.
 - [ ] **17.3** Répertoire de travail OCR **hors archive** : `SEAMTECH_OCR_TRAVAIL_DIR`
       (défaut `data/ocr_travail`).
-- [ ] **17.4** État connu : la copie canonique de la fiche réelle 7792-SO et les 7 ZIP du corpus sont déjà suivis/historiques dans le dépôt public ; le doublon `7792-SO_ffab.pdf` à la racine est retiré du tree courant. Le fichier subsiste dans l'historique Git. Aucune donnée client réelle nouvelle n'est ajoutée par cette mission. Décision du commanditaire : visibilité du dépôt reste publique ; maintenir les garde-fous de confidentialité.
+- [ ] **17.4** État connu : la copie canonique de la fiche réelle 1042-EX et les 7 ZIP du corpus sont déjà suivis/historiques dans le dépôt public ; le doublon `1042-EX_ffab.pdf` à la racine est retiré du tree courant. Le fichier subsiste dans l'historique Git. Aucune donnée client réelle nouvelle n'est ajoutée par cette mission. Décision du commanditaire : visibilité du dépôt reste publique ; maintenir les garde-fous de confidentialité.
 - [ ] **17.5** Les sauvegardes n'écrivent **jamais** dans l'archive (inventaire seul).
 
 **RG14 — aucun appel réseau dans le code de traitement** :
@@ -450,7 +502,7 @@ l'inventaire seul ne prouve rien, c'est l'exécution qui compte :
 
 | Contrôle | Statut / preuve |
 |---|---|
-| ZIP corpus : empreintes courantes | ✅ Recalculées le 29/09; aucune modification locale. Sorties brutes (SHA-256) :<br>`AQUILA 250216AJA-20260928T182324Z-1-001.zip` — `fd1fca0930494328687ecf5d6905af139c24f93a8b9e2e51b2f6075772446be6`<br>`ATTALIA 250121JA-20260928T182325Z-1-001.zip` — `a71ec77d6d5abf3c55f5ca8aa5c79d3347d3b3765b91f54950065b9c2161d699`<br>`BAVARIA 32 - 250604JA-20260928T182326Z-1-001.zip` — `a9ca298cae78ccbacfaab69260cede299062ef0d20e0a7fba62c3539ac3a538f`<br>`BAVARIA 34 - 250323JA-20260928T182327Z-1-001.zip` — `483f89716b953734315b7bbb4ba81050dc24b33a162e2a2623604eee268b8f6f`<br>`DAMIEN 4 - 250821JA-20260928T182330Z-1-001.zip` — `2f1ecb0205b817c3dbdb324bf444aad9fb5ddce1d3f415859698fbb21fb428bf`<br>`DEHLER 39 - 250329AJA-20260928T182330Z-1-001.zip` — `b3171d070f6b332366263626a665e7f7985bb8406062c2957895401850df6a06`<br>`GIB SEA 284 - 250328AJA-20260928T182331Z-1-001.zip` — `103359b561ef32f5a8ce04b373864c26a0b496156efc1f728e75f0c0911b4aa3` |
+| ZIP corpus : empreintes courantes | ✅ Recalculées le 29/09; aucune modification locale. Sorties brutes (SHA-256) :<br>`CORPUS-01-20260928T182324Z-1-001.zip` — `fd1fca0930494328687ecf5d6905af139c24f93a8b9e2e51b2f6075772446be6`<br>`CORPUS-02-20260928T182325Z-1-001.zip` — `a71ec77d6d5abf3c55f5ca8aa5c79d3347d3b3765b91f54950065b9c2161d699`<br>`CORPUS-03-20260928T182326Z-1-001.zip` — `a9ca298cae78ccbacfaab69260cede299062ef0d20e0a7fba62c3539ac3a538f`<br>`CORPUS-04-20260928T182327Z-1-001.zip` — `483f89716b953734315b7bbb4ba81050dc24b33a162e2a2623604eee268b8f6f`<br>`CORPUS-05-20260928T182330Z-1-001.zip` — `2f1ecb0205b817c3dbdb324bf444aad9fb5ddce1d3f415859698fbb21fb428bf`<br>`CORPUS-06-20260928T182330Z-1-001.zip` — `b3171d070f6b332366263626a665e7f7985bb8406062c2957895401850df6a06`<br>`CORPUS-07-20260928T182331Z-1-001.zip` — `103359b561ef32f5a8ce04b373864c26a0b496156efc1f728e75f0c0911b4aa3` |
 | PDF racine / copie canonique | ✅ SHA-256 identique à l'empreinte de la copie canonique : `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40`. Le doublon racine est retiré du tree; il subsiste dans l'historique Git. |
 | Suite locale sélectionnée | ✅ `766 passed, 3 skipped, 234 deselected`; sélection par marqueurs `-m`. Vérifications précédemment réussies : Ruff, TypeScript, build frontend, compilation Python, YAML et `git diff --check`. |
 | Benchmark PostgreSQL jetable, 10 000 fiches | ✅ **SYNTHÉTIQUE** — run initial [36594937291](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36594937291) (1 min 5 s) et rerun final [36598278884](https://github.com/Ilyes-Neguir/SEAMTECH-search/actions/runs/36598278884) (1 min 11 s), 50 échantillons/scénario. Percentiles et trois plans EXPLAIN complets des deux runs sont archivés : `docs/benchmarks/scale-bench-synthetique-36594937291.{json,md}` et `docs/benchmarks/scale-bench-synthetique-36598278884.{json,md}`. |
@@ -532,7 +584,7 @@ la mise en service qui est recadrée.
 | 22.1 | **MinIO est le fournisseur retenu** pour cette release (R2/S3 restent optionnels) — la question n'est pas rouverte | ce document §1.6, `docs/DEPLOYMENT.md` (en-tête) |
 | 22.2 | Les **identités S3 dédiées** ne sont plus une décision mais du **provisionnement + vérification sur le serveur cible** | §2.4, `scripts/provisionner_stockage.sh`, `docs/DEPLOYMENT.md` |
 | 22.3 | **Six services** : `frontend`, `web` (API), `worker`, `postgres`, `redis`, `minio` | §4.1, §4.4, §13.1, `docs/verite_terrain/MISE_EN_SERVICE.md` |
-| 22.4 | Migrations vérifiées contre la **constante de schéma de la release** (`VERSION_SCHEMA_METIER`, liste finissant à `021_revision_fiche`) | §5.1–5.2 |
+| 22.4 | Migrations vérifiées contre la **constante de schéma de la release** (`VERSION_SCHEMA_METIER`, liste finissant à `033_verdicts_revue`) | §5.1–5.2 |
 | 22.5 | **50 Go / 8 Go / 2 cœurs = provisoires** ; le stockage doit couvrir originaux, copies stockées, traitement, quarantaine, base, sauvegardes et croissance | §1.2–1.3, `docs/ARRIVEE_ARCHIVE.md`, `docs/verite_terrain/DECISION_MATERIEL.md` |
 | 22.6 | **Sécurité AVANT les données réelles et les workers** : secrets, archive en lecture seule, exposition réseau, TLS | §2, §3, §16, `docs/DEPLOYMENT.md` (section TLS/accès) |
 | 22.7 | **Import progressif** : échantillon représentatif + cas difficiles avant l'archive entière | §8.7, `docs/ARRIVEE_ARCHIVE.md` |

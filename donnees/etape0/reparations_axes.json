@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "reparations": [
+    {
+      "id": "19fbc2f01f22bdff",
+      "axe": "matiere",
+      "avant": null,
+      "apres": "fibercom hybrid cool grey",
+      "source_sha": "dc7906d",
+      "source_date": "2026-11-10",
+      "operateur": "audit-lot20",
+      "motif": "valeur relue dans l'état versionné du 2026-11-10 : perdue au reimport c52e722",
+      "horodatage": "2026-11-12T19:11:38+00:00"
+    }
+  ]
+}

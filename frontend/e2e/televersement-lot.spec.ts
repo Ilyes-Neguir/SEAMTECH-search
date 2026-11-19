@@ -224,7 +224,7 @@ test("dossier complet vers PostgreSQL et stockage S3 émulé, lecture sans sourc
   const parent = await mkdtemp(path.join(os.tmpdir(), "seamtech-e2e-reel-"))
   const racine = path.join(parent, "ARCHIVE-SYNTHETIQUE")
   const dossier = path.join(racine, "DOSSIER")
-  const pdf = await readFile(path.resolve(__dirname, "../../sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"))
+  const pdf = await readFile(path.resolve(__dirname, "../../sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"))
   await mkdir(dossier, { recursive: true })
   await writeFile(path.join(dossier, "fiche.pdf"), pdf)
   await writeFile(path.join(dossier, "annexe-e2e.txt"), "annexe synthetique e2e")
@@ -243,7 +243,7 @@ test("dossier complet vers PostgreSQL et stockage S3 émulé, lecture sans sourc
     // Déplace les sources de test sans les détruire : la lecture doit passer par les objets.
     const sources = path.resolve(__dirname, "e2e-data/uploads/lots-televerses", token, "fichiers", "ARCHIVE-SYNTHETIQUE")
     await rename(sources, path.join(parent, "sources-conservees"))
-    const liste = await page.request.get("/api/fiches/7792-SO/pieces")
+    const liste = await page.request.get("/api/fiches/1042-EX/pieces")
     expect(liste.status()).toBe(200)
     const pieces = (await liste.json()).pieces as Array<{ id: number; name: string; is_primary_pdf?: boolean }>
     const principale = pieces.find(piece => piece.is_primary_pdf)

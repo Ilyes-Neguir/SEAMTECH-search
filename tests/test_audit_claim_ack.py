@@ -208,6 +208,52 @@ def test_boucle_worker_proprietaire_acquitte_et_libere(
     index.close()
 
 
+def test_boucle_acquitte_le_message_d_un_job_terminal_echoue(
+    store: RedisStore, tmp_path: Path
+) -> None:
+    """Un job « failed » est terminal : son message est acquitté, pas remis en file.
+
+    Mesuré avant correctif : l'ensemble des statuts acquittés par la boucle ne
+    contenait pas « failed ». Le message d'un job échoué restait donc
+    revendiqué jusqu'à l'expiration du TTL du claim, puis ``reconcilier_file``
+    le reprenait comme orphelin et le remettait en file — indéfiniment, sans
+    jamais rien refaire de plus à chaque tour.
+
+    La règle est désormais la MÊME que celle de la garde d'idempotence : un job
+    terminal est acquitté, point.
+    """
+    from seamtech_search import worker as module_worker
+
+    config = _config(tmp_path)
+    index = _index(config)
+    source = _dossier(tmp_path, "affaire-echouee")
+    create_job(index, "job-echoue", str(source), durability="durable")
+    # Le job est DÉJÀ terminal : échec définitif, il n'y a plus rien à refaire.
+    terminer_job(
+        index,
+        "job-echoue",
+        status="failed",
+        failure_reason="lettre morte après épuisement des tentatives",
+        result={"statut": "failed"},
+    )
+    store.enqueue_task("imports", {"job_id": "job-echoue", "source_path": str(source)})
+
+    module_worker.worker_loop(config, index, store, worker_id="worker-echoue", run_once=True)
+
+    client = store._get_client()
+    # Le message est sorti de la liste de traitement : il ne sera pas remis en
+    # file à l'expiration du TTL. C'est l'assertion qui discriminait avant le
+    # correctif (elle valait 1).
+    assert client.llen(PROCESSING) == 0, (
+        "le message d'un job « failed » doit être acquitté, pas laissé en file"
+    )
+    assert store.revendication("imports", "job-echoue") is None, "le verrou doit être libéré"
+    # Et le job n'a pas été retouché pour autant : il reste « failed ».
+    job = get_job(index, "job-echoue")
+    assert job is not None and job["status"] == "failed", job
+    index.close()
+
+
 def test_r1_vrai_traitement_worker_dechu_n_ecrase_pas_resultat_du_repreneur(
     store: RedisStore, tmp_path: Path
 ) -> None:

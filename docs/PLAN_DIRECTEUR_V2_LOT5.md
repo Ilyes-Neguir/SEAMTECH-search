@@ -105,12 +105,12 @@ fonds complet reste l'étape DEP sur le serveur d'entreprise.
   401/403/200/404 + population complète médiane relue). Redis 89/0.
   Couverture globale 86,11 % (plancher 85 %).
 - Parcours navigateur (premier essai) : Lot 5 3/3 — l'approbateur évalue la
-  vraie fiche 7792-SO contre les cinq voiles de référence semées du même
+  vraie fiche 1042-EX contre les cinq voiles de référence semées du même
   modèle/type : verdict « Cohérente avec la population », justification par
   dimension et 5 fiches sources affichées, évaluation persistée relue dans
   l'historique (N=5) ; lecture consulte sans bouton d'évaluation ; secours
   refusé. Lot 4b 3/3, Lot 3b 3/3, Lot 1 7/7, parcours 8/8, OCR 4/4 ;
-  parcours complet 7792-SO : 909 ms.
+  parcours complet 1042-EX : 909 ms.
 - Qualification native `40249015834`, Qualification réservés `40249016199`,
   Perf comparaison `40249015823` : succès au même SHA.
 - Les contrats purs (statistiques médiane/MAD/IQR, insuffisance, hétérogénéité,

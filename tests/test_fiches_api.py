@@ -19,7 +19,7 @@ from seamtech_search.fiches import routes
 from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parent.parent
-PDF_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+PDF_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 URL_PG = __import__("os").environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 
 
@@ -80,16 +80,16 @@ class _FakeIndex:
         return self._connexion
 
 
-CHAMPS_7792 = [
-    ("fiche.code", None, "fiche", "code", "7792-SO", "7792-SO", "gabarit", 0.99, 0, {"x0": 101.8, "page": 0}, 1, False, None, None),
+CHAMPS_REFERENCE = [
+    ("fiche.code", None, "fiche", "code", "1042-EX", "1042-EX", "gabarit", 0.99, 0, {"x0": 101.8, "page": 0}, 1, False, None, None),
     ("cotes.finie.slu_m", None, "fiche_cotes", "slu_m", "6,60 m", "6.6", "gabarit", 0.99, 0, {"x0": 234.0, "page": 0}, 1, True, 7, "2026-09-21T10:00:00+00:00"),
 ]
 
 
 class TestChampsDeFicheUnitaire:
     def test_trace_complete_des_champs(self) -> None:
-        index = _FakeIndex({"id_fiche FROM fiche": [(1,)], "FROM fiche_champ_extrait": CHAMPS_7792})
-        champs = routes.champs_de_fiche(index, "7792-SO")
+        index = _FakeIndex({"id_fiche FROM fiche": [(1,)], "FROM fiche_champ_extrait": CHAMPS_REFERENCE})
+        champs = routes.champs_de_fiche(index, "1042-EX")
         assert len(champs) == 2
         assert champs[0]["champ"] == "fiche.code" and champs[0]["confiance"] == 0.99
         assert champs[0]["zone"]["page"] == 0 and champs[0]["version_gabarit"] == 1
@@ -179,7 +179,7 @@ class TestDetectionUnitaire:
     def test_detecter_pdf_inconnu_est_un_resultat(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Aucun gabarit en base → 200 « reprise_complete », jamais un crash."""
         pdf = tmp_path / "fiche.pdf"
-        pdf.write_bytes(PDF_7792.read_bytes())
+        pdf.write_bytes(PDF_REFERENCE.read_bytes())
         monkeypatch.setattr(routes, "charger_gabarits", lambda index: [])
         resultat = routes.detecter_pdf(_FakeIndex({}), pdf)
         assert resultat["detecte"] is False and resultat["voie"] == "reprise_complete"
@@ -201,7 +201,7 @@ def _client_sqlite(tmp_path: Path) -> TestClient:
 @pytest.mark.parametrize(
     "methode,chemin",
     [
-        ("get", "/fiches/7792-SO/champs"),
+        ("get", "/fiches/1042-EX/champs"),
         ("get", "/gabarits"),
         ("get", "/gabarits/FICHE_PORTANT_V1/versions"),
         ("post", "/gabarits/FICHE_PORTANT_V1/versions"),
@@ -251,14 +251,14 @@ class TestRoutesLivePostgreSQL:
             admin.close()
         url_base = url_base_jetable(URL_PG, nom_base)
         from seamtech_search.fiches.gabarits import initialiser_gabarits
-        from seamtech_search.fiches.persistance import initialiser_verite_7792
+        from seamtech_search.fiches.persistance import initialiser_verite_reference
         from seamtech_search.indexer import SearchIndex
 
         index = SearchIndex(Path(f"/tmp/unused-b2-{nom_base}.db"), url_base)
         index.initialize()
         index.run_migrations()
         initialiser_gabarits(index)
-        initialiser_verite_7792(index, PDF_7792)
+        initialiser_verite_reference(index, PDF_REFERENCE)
         try:
             yield {"index": index, "url": url_base}
         finally:
@@ -311,7 +311,7 @@ class TestRoutesLivePostgreSQL:
     def test_detection_sans_ecriture(self, client_live: TestClient, base_live: dict) -> None:
         reponse = client_live.post(
             "/gabarits/detecter",
-            files={"fichier": ("fiche.pdf", PDF_7792.read_bytes(), "application/pdf")},
+            files={"fichier": ("fiche.pdf", PDF_REFERENCE.read_bytes(), "application/pdf")},
         )
         assert reponse.status_code == 200, reponse.text
         corps = reponse.json()
@@ -327,12 +327,12 @@ class TestRoutesLivePostgreSQL:
         from seamtech_search.fiches.gabarits import charger_gabarits
         from seamtech_search.fiches.persistance import ecrire_fiche
 
-        fiche = extraire_fiche(PDF_7792, gabarits=charger_gabarits(base_live["index"]), gabarit_code="FICHE_PORTANT_V1")
+        fiche = extraire_fiche(PDF_REFERENCE, gabarits=charger_gabarits(base_live["index"]), gabarit_code="FICHE_PORTANT_V1")
         ecrire_fiche(base_live["index"], fiche)
-        reponse = client_live.get("/fiches/7792-SO/champs")
+        reponse = client_live.get("/fiches/1042-EX/champs")
         assert reponse.status_code == 200
         champs = reponse.json()
-        assert any(c["champ"] == "fiche.code" and c["valeur_normalisee"] == "7792-SO" for c in champs)
+        assert any(c["champ"] == "fiche.code" and c["valeur_normalisee"] == "1042-EX" for c in champs)
         assert any(c["zone"] and c["zone"]["page"] == 0 for c in champs)
         inconnue = client_live.get("/fiches/ABSENTE/champs")
         assert inconnue.status_code == 404
@@ -345,7 +345,7 @@ class TestRoutesLivePostgreSQL:
         racine = tmp_path / 'archive'
         dossier = racine / 'synthese'
         dossier.mkdir(parents=True)
-        shutil.copy(PDF_7792, dossier / 'fiche.pdf')
+        shutil.copy(PDF_REFERENCE, dossier / 'fiche.pdf')
         def echec(*args: Any, **kwargs: Any) -> dict:
             raise DepotImpossible('stockage indisponible')
         monkeypatch.setattr(routes, 'executer_lot', echec)
@@ -367,7 +367,7 @@ class TestRoutesLivePostgreSQL:
         racine = tmp_path / 'archive-local'
         dossier = racine / 'synthese'
         dossier.mkdir(parents=True)
-        shutil.copy(PDF_7792, dossier / 'fiche.pdf')
+        shutil.copy(PDF_REFERENCE, dossier / 'fiche.pdf')
         declenche = threading.Event()
         def echec(*args: Any, **kwargs: Any) -> dict:
             declenche.set()
@@ -398,7 +398,7 @@ class TestRoutesLivePostgreSQL:
         racine = tmp_path / 'archive-erreur'
         dossier = racine / 'synthese'
         dossier.mkdir(parents=True)
-        shutil.copy(PDF_7792, dossier / 'fiche.pdf')
+        shutil.copy(PDF_REFERENCE, dossier / 'fiche.pdf')
         def echec(*args: Any, **kwargs: Any) -> dict:
             raise RuntimeError('erreur synthetique inattendue')
         monkeypatch.setattr(depot, 'executer_lot', echec)
@@ -423,7 +423,7 @@ class TestRoutesLivePostgreSQL:
 
         dossier = tmp_path / 'archive-secret' / 'synthese'
         dossier.mkdir(parents=True)
-        shutil.copy(PDF_7792, dossier / 'fiche.pdf')
+        shutil.copy(PDF_REFERENCE, dossier / 'fiche.pdf')
         secret = 'SECRET-SYNTHETIQUE-TEST'
         def echec(*args: Any, **kwargs: Any) -> None:
             raise RuntimeError(secret)
@@ -451,7 +451,7 @@ class TestRoutesLivePostgreSQL:
         racine = tmp_path / 'archive-enfilage'
         dossier = racine / 'synthese'
         dossier.mkdir(parents=True)
-        shutil.copy(PDF_7792, dossier / 'fiche.pdf')
+        shutil.copy(PDF_REFERENCE, dossier / 'fiche.pdf')
         monkeypatch.setattr(worker, 'file_durable_disponible', lambda store: True)
         monkeypatch.setattr(RedisStore, 'enqueue_task', lambda *args, **kwargs: False)
         reponse = client_live.post('/imports/dossier/lot', json={'racine': str(racine)})

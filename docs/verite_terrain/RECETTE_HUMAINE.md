@@ -14,7 +14,7 @@ lecture.
 
 | # | Fiche | Fichier | Cas couvert |
 |---|---|---|---|
-| 1 | 7792-SO (la vraie fiche, 48 champs) | `sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf` | relecture normale d'une fiche riche |
+| 1 | 1042-EX (la vraie fiche, 48 champs) | `sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf` | relecture normale d'une fiche riche |
 | 2 | Génois (fiche synthétique) | `sample_data/CLIENT-GENOA/fiche-genois.pdf` | **champs incertains** : peu de texte lisible, plusieurs champs seront vides ou de faible confiance — décision humaine : compléter ou laisser vide |
 | 3 | Fiche technique (synthétique) | `sample_data/CLIENT-123/fiche-technique.pdf` | deuxième relecture de confirmation |
 
@@ -22,7 +22,7 @@ Cas transverses exercés par la recette :
 - **cote à corriger** : à l'étape 3, corriger volontairement UN champ de la
   fiche 1 avant de valider (le champ corrigé est verrouillé — RG11 ; c'est le
   comportement attendu).
-- **doublon de fichier (unicité `path_key`)** : à l'étape 5, redéposer le dossier `CLIENT-7792-SO` —
+- **doublon de fichier (unicité `path_key`)** : à l'étape 5, redéposer le dossier `CLIENT-1042-EX` —
   observer ce que fait le système (signalement / statut) et le noter ; le système garantit
   l'unicité de `path_key` dans `documents` (`ON CONFLICT (path_key)`), sans extrapolation au-delà
   de cette unicité prouvée.
@@ -41,9 +41,9 @@ Préparer : un chrono (téléphone suffit), cette page imprimée, un stylo.
       ouvrir la fiche → démarrer le chrono → relire chaque champ en le
       comparant au PDF affiché à droite → corriger UN champ de la fiche 1
       (cote à corriger) → valider → ARRÊTER le chrono. Noter dans le tableau.
-- [ ] **Étape 4 — Recherche.** Dans la recherche, taper `7792-SO` : la fiche
+- [ ] **Étape 4 — Recherche.** Dans la recherche, taper `1042-EX` : la fiche
       validée remonte en tête (les fiches `valide` seulement sont cherchables).
-- [ ] **Étape 5 — Doublon (unicité `path_key`).** Redéposer le dossier `CLIENT-7792-SO`. Noter ce
+- [ ] **Étape 5 — Doublon (unicité `path_key`).** Redéposer le dossier `CLIENT-1042-EX`. Noter ce
       que le système affiche ; vérifier le comportement garanti par l'unicité de `path_key`
       dans la table `documents`.
 - [ ] **Étape 6 — Publication.** Recopier les 3 durées dans le tableau de
@@ -53,7 +53,7 @@ Préparer : un chrono (téléphone suffit), cette page imprimée, un stylo.
 
 | # | Fiche | Durée (s) | Champs corrigés | Opérateur | Date |
 |---|-------|-----------|-----------------|-----------|------|
-| 1 | 7792-SO | ……… | ……… | ……… | ……… |
+| 1 | 1042-EX | ……… | ……… | ……… | ……… |
 | 2 | GENOA | ……… | ……… | ……… | ……… |
 | 3 | 123 | ……… | ……… | ……… | ……… |
 

@@ -17,7 +17,13 @@ pytestmark = [pytest.mark.redis_queue, pytest.mark.postgres]
 def redis_exterieur(monkeypatch):
     from tests import test_file_durable as durable_sqlite
     from tests import test_file_durable_postgres as durable_pg
-    from tests.helpers_redis_isole import serveur_redis_isole
+    from tests.helpers_redis_isole import binaire_redis, serveur_redis_isole
+
+    # Même discipline que pour PostgreSQL : sans serveur de test, on est
+    # IGNORÉ, pas en échec. Un banc qui erre sur un prérequis absent cache
+    # les vraies régressions derrière son bruit.
+    if not binaire_redis() and not os.environ.get("SEAMTECH_TEST_REDIS_URL"):
+        pytest.skip("redis-server de test indisponible")
 
     # Un second serveur privé joue le rôle de serveur utilisateur : aucun
     # témoin n'est écrit sur l'URL réellement fournie par l'environnement.

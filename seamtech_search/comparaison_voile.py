@@ -317,6 +317,360 @@ def comparer_extractions(
 
 
 # ---------------------------------------------------------------------------
+# Comparaison de N fiches — attributs à gauche, une colonne par fiche
+# ---------------------------------------------------------------------------
+
+#: Au-delà, la table n'entre plus dans un écran d'atelier : on refuse au lieu
+#: d'étaler trente colonnes que personne ne lit.
+NB_MAX_FICHES_COMPAREES = 12
+
+
+def _etats(valeurs: list[Any], rang_reference: int) -> list[str]:  # noqa: ANN401
+    etats: list[str] = []
+    for rang, valeur in enumerate(valeurs):
+        if valeur is None:
+            etats.append("manquant")
+        elif rang == rang_reference:
+            etats.append("reference")
+        else:
+            etats.append("present")
+    return etats
+
+
+def _ligne_texte(
+    champ: str,
+    libelle: str,
+    valeurs: list[Any],  # noqa: ANN401
+    rang_reference: int,
+) -> dict[str, Any]:
+    """Une ligne d'attribut textuel : les valeurs, leur état, et c'est tout.
+
+    Pas d'écart : « Ocean » contre « medium Ocean » ne se soustrait pas. La
+    ligne dit seulement si c'est la même chose, et répond « je ne sais pas »
+    quand une fiche n'a pas la valeur — l'identité n'est pas supposée.
+    """
+    connues = [valeur for valeur in valeurs if valeur is not None]
+    return {
+        "champ": champ,
+        "libelle": libelle,
+        "numerique": False,
+        "unite": None,
+        "valeurs": valeurs,
+        "etats": _etats(valeurs, rang_reference),
+        "nb_fiches_avec_valeur": len(connues),
+        "identique": (len({normaliser_type_voile(str(valeur)) for valeur in connues}) == 1)
+        if len(connues) == len(valeurs)
+        else None,
+    }
+
+
+def _ligne_numerique(
+    champ: str,
+    libelle: str,
+    unite: str | None,
+    valeurs: list[Any],  # noqa: ANN401
+    rang_reference: int,
+) -> dict[str, Any]:
+    """Une ligne d'attribut chiffré : écarts par rapport à la colonne de référence.
+
+    L'écart est une soustraction, affichée dès deux fiches — c'est de
+    l'arithmétique, pas une estimation, et aucun effectif minimum ne la
+    conditionne. Il n'est en revanche calculé que là où les DEUX valeurs
+    existent : une cote non lue ne devient pas un écart de zéro.
+    """
+    reference = valeurs[rang_reference]
+    deltas: list[float | None] = []
+    deltas_cm: list[float | None] = []
+    deltas_pct: list[float | None] = []
+    for rang, valeur in enumerate(valeurs):
+        if valeur is None or reference is None or rang == rang_reference:
+            deltas.append(None)
+            deltas_cm.append(None)
+            deltas_pct.append(None)
+            continue
+        delta = float(valeur) - float(reference)
+        deltas.append(_arrondi(delta, 3))
+        # L'atelier parle en centimètres : 0,05 m de guindant, c'est 5 cm.
+        deltas_cm.append(_arrondi(delta * 100.0, 1) if unite == "m" else None)
+        deltas_pct.append(_arrondi(delta / float(reference) * 100.0, 2) if float(reference) > 0 else None)
+    connues = [float(valeur) for valeur in valeurs if valeur is not None]
+    return {
+        "champ": champ,
+        "libelle": libelle,
+        "numerique": True,
+        "unite": unite,
+        "valeurs": valeurs,
+        "etats": _etats(valeurs, rang_reference),
+        "nb_fiches_avec_valeur": len(connues),
+        "deltas": deltas,
+        "deltas_cm": deltas_cm,
+        "deltas_pct": deltas_pct,
+        "identique": (len(set(connues)) == 1) if len(connues) == len(valeurs) else None,
+        "min": min(connues) if connues else None,
+        "max": max(connues) if connues else None,
+        "etendue": _arrondi(max(connues) - min(connues), 3) if len(connues) >= 2 else None,
+        "ecart_max_pct": (
+            max((pct for pct in deltas_pct if pct is not None), key=abs) if any(p is not None for p in deltas_pct) else None
+        ),
+    }
+
+
+def comparer_plusieurs(
+    extractions: list[ExtractionVoile],
+    *,
+    noms_modeles: list[str | None] | None = None,
+    corrections: list[int | None] | None = None,
+    codes_fiches: list[str | None] | None = None,
+    id_reference: int | None = None,
+) -> dict[str, Any]:
+    """Compare N extractions : ATTRIBUTS À GAUCHE, une colonne par fiche.
+
+    Mêmes blocs et mêmes états que la comparaison à deux, étendus à un groupe.
+    Deux règles tiennent tout l'édifice :
+
+    * **les écarts sont affichés dès deux fiches**, sans seuil — ce sont des
+      soustractions, pas des estimations. Rien ne les conditionne, et surtout
+      pas un effectif minimum ;
+    * **un pourcentage sans cible ne veut rien dire** : « +2 % » par rapport à
+      quoi ? La référence est donc NOMMÉE dans la sortie, et choisissable. Par
+      défaut c'est la première colonne, jamais une moyenne implicite.
+
+    Aucun verdict de réutilisation ici, aucune cohérence statistique : ce
+    module mesure des écarts. Le verdict est la Fonction B (Lot 5), qui exige
+    un effectif et l'écrit.
+    """
+    if len(extractions) < 2:
+        raise ComparaisonRefusee("Comparer demande au moins deux fiches.")
+    if len(extractions) > NB_MAX_FICHES_COMPAREES:
+        raise ComparaisonRefusee(
+            f"Comparer plus de {NB_MAX_FICHES_COMPAREES} fiches n'est pas lisible : "
+            "la table est refusée au lieu d'étaler des colonnes que personne ne lit."
+        )
+    identifiants = [extraction.id_extraction for extraction in extractions if extraction.id_extraction is not None]
+    if len(set(identifiants)) != len(identifiants):
+        raise ComparaisonRefusee("Comparer une extraction à elle-même n'a pas de sens.")
+
+    nombre = len(extractions)
+    noms = list(noms_modeles or (None,) * nombre)
+    corr = list(corrections or (None,) * nombre)
+    codes = list(codes_fiches or (None,) * nombre)
+
+    avertissements: list[str] = []
+    rang_reference = 0
+    if id_reference is not None:
+        trouves = [
+            rang
+            for rang, extraction in enumerate(extractions)
+            if extraction.id_extraction is not None and int(extraction.id_extraction) == int(id_reference)
+        ]
+        if trouves:
+            rang_reference = trouves[0]
+        else:
+            avertissements.append(
+                f"Référence {id_reference} absente du groupe : la première colonne sert de référence."
+            )
+    reference = extractions[rang_reference]
+
+    # « Même modèle » n'est jamais une ressemblance de libellés : c'est
+    # l'égalité de l'identifiant canonique, sur TOUTES les fiches du groupe.
+    modeles = {extraction.boat_model_id for extraction in extractions}
+    meme_modele = len(modeles) == 1 and None not in modeles
+    types = [normaliser_type_voile(extraction.type_voile) for extraction in extractions]
+    type_manquant = any(not valeur for valeur in types)
+    meme_type = len(set(types)) == 1 and not type_manquant
+
+    if any(extraction.boat_model_id is None for extraction in extractions):
+        avertissements.append(
+            "Au moins une fiche n'est pas liée à un modèle de bateau canonique "
+            "(écran Extractions) : la comparaison même modèle n'est pas établie."
+        )
+    elif not meme_modele:
+        avertissements.append(
+            "Modèles de bateau DIFFÉRENTS : comparaison indicative seulement, "
+            "ce n'est pas une comparaison même modèle."
+        )
+    if type_manquant:
+        avertissements.append("Type de voile non lu sur au moins une fiche : l'égalité de type n'est pas établie.")
+    elif not meme_type:
+        avertissements.append("Types de voile différents au sein du groupe : comparaison indicative seulement.")
+    if any(extraction.statut_plausibilite == "implausible" for extraction in extractions):
+        avertissements.append(
+            "Au moins une fiche est implausible (RG16) : ses cotes sont à vérifier avant toute conclusion."
+        )
+
+    identification: list[dict[str, Any]] = [
+        _ligne_texte(
+            "modele_bateau",
+            "Modèle de bateau",
+            [noms[rang] or extraction.modele_bateau_brut for rang, extraction in enumerate(extractions)],
+            rang_reference,
+        ),
+        _ligne_texte("type_voile", "Type de voile", [e.type_voile for e in extractions], rang_reference),
+        _ligne_texte("gamme", "Gamme", [e.gamme for e in extractions], rang_reference),
+        _ligne_texte("code_fiche", "Code fiche", [e.code_fiche for e in extractions], rang_reference),
+        _ligne_texte("gabarit_code", "Gabarit d'extraction", [e.gabarit_code for e in extractions], rang_reference),
+        _ligne_texte(
+            "nom_fichier_source", "Fichier source", [e.nom_fichier_source for e in extractions], rang_reference
+        ),
+    ]
+    if meme_modele:
+        identification[0]["identique"] = True
+    elif all(e.boat_model_id is not None for e in extractions):
+        identification[0]["identique"] = False
+    if meme_type:
+        identification[1]["identique"] = True
+    elif not type_manquant:
+        identification[1]["identique"] = False
+
+    dimensions = [
+        _ligne_numerique(
+            champ,
+            *_LIBELLES_DIMENSIONS[champ],
+            [getattr(extraction, champ) for extraction in extractions],
+            rang_reference,
+        )
+        for champ in DIMENSIONS_COMPAREES
+    ]
+
+    cle_materiau = lambda materiau: (materiau.role.lower(), materiau.niveau or 0)  # noqa: E731
+    cles: list[tuple[str, int]] = sorted(
+        {cle_materiau(materiau) for extraction in extractions for materiau in extraction.materiaux},
+        key=lambda cle: (cle[0], cle[1]),
+    )
+    materiaux: list[dict[str, Any]] = []
+    for cle in cles:
+        par_fiche = [
+            next((m for m in extraction.materiaux if cle_materiau(m) == cle), None) for extraction in extractions
+        ]
+        niveau = next((m.niveau for m in par_fiche if m is not None), None)
+        suffixe = f" — niveau {niveau}" if niveau else ""
+        materiaux.append(
+            _ligne_texte(
+                "materiau.designation",
+                f"{cle[0].replace('_', ' ').capitalize()}{suffixe} : matière",
+                [m.designation if m else None for m in par_fiche],
+                rang_reference,
+            )
+        )
+        materiaux.append(
+            _ligne_numerique(
+                "materiau.grammage",
+                f"{cle[0].replace('_', ' ').capitalize()}{suffixe} : grammage",
+                "g/m²",
+                [m.grammage_g_m2 if m else None for m in par_fiche],
+                rang_reference,
+            )
+        )
+        materiaux[-2]["role"] = cle[0]
+        materiaux[-2]["niveau"] = niveau
+        materiaux[-1]["role"] = cle[0]
+        materiaux[-1]["niveau"] = niveau
+
+    qualite: list[dict[str, Any]] = [
+        _ligne_texte(
+            "statut_extraction",
+            "Complétude d'extraction",
+            [e.statut_extraction for e in extractions],
+            rang_reference,
+        ),
+        _ligne_texte(
+            "statut_plausibilite", "Plausibilité RG16", [e.statut_plausibilite for e in extractions], rang_reference
+        ),
+        _ligne_numerique(
+            "score_qualite", "Score qualité", None, [e.score_qualite for e in extractions], rang_reference
+        ),
+        _ligne_numerique(
+            "confiance_moyenne",
+            "Confiance moyenne des champs",
+            None,
+            [e.confiance_moyenne for e in extractions],
+            rang_reference,
+        ),
+        _ligne_texte("statut_liaison", "Liaison au modèle", [e.statut_liaison for e in extractions], rang_reference),
+        _ligne_numerique(
+            "corrections", "Corrections approbateur", None, list(corr), rang_reference
+        ),
+    ]
+
+    # Le chevauchement et le plus grand écart ne comptent que les COTES : une
+    # mesure physique. Les compter sur les scores de qualité donnerait un
+    # « écart max » de 0 % sur deux fiches dont aucune cote n'a été lue — un
+    # chiffre rassurant et faux.
+    dimensions_comparables = [ligne for ligne in dimensions if ligne["nb_fiches_avec_valeur"] >= 2]
+    if len(dimensions_comparables) < _CHEVAUCHEMENT_MIN_DIMENSIONS:
+        avertissements.append(
+            f"Chevauchement insuffisant : {len(dimensions_comparables)} cote(s) comparable(s) "
+            f"seulement (minimum {_CHEVAUCHEMENT_MIN_DIMENSIONS} pour comparer utilement)."
+        )
+
+    ecart_max_pct: float | None = None
+    ecart_max_champ: str | None = None
+    ecart_max_libelle: str | None = None
+    for ligne in dimensions_comparables:
+        candidat = ligne.get("ecart_max_pct")
+        if candidat is None:
+            continue
+        if ecart_max_pct is None or abs(candidat) > abs(ecart_max_pct):
+            ecart_max_pct = candidat
+            ecart_max_champ = ligne["champ"]
+            ecart_max_libelle = ligne["libelle"]
+
+    return {
+        "nb_fiches": nombre,
+        "reference": {
+            "rang": rang_reference,
+            "id_extraction": reference.id_extraction,
+            "code_fiche": reference.code_fiche,
+            "libelle": codes[rang_reference] or reference.code_fiche or f"Colonne {rang_reference + 1}",
+        },
+        "colonnes": [_resume(e, noms[rang], codes[rang]) for rang, e in enumerate(extractions)],
+        "comparable": meme_modele and meme_type,
+        "meme_modele_bateau": meme_modele,
+        "meme_type_voile": meme_type,
+        "avertissements": avertissements,
+        "blocs": {
+            "identification": identification,
+            "dimensions": dimensions,
+            "materiaux": materiaux,
+            "qualite": qualite,
+        },
+        "synthese": {
+            "dimensions_comparables": len(dimensions_comparables),
+            "ecart_max_pct": ecart_max_pct,
+            "ecart_max_champ": ecart_max_champ,
+            "ecart_max_libelle": ecart_max_libelle,
+            # Le plus grand effectif rencontré sur une cote : c'est cette
+            # valeur que lit le seuil statistique (≥ 5) de la Fonction B.
+            "effectif_max": max((ligne["nb_fiches_avec_valeur"] for ligne in dimensions), default=0),
+        },
+    }
+
+
+def comparaison_entre_plusieurs(
+    index: Any,  # noqa: ANN401
+    ids: list[int],
+    *,
+    id_reference: int | None = None,
+) -> dict[str, Any]:
+    """Comparaison persistée de N extractions (lecture seule)."""
+    _exiger_postgres(index, "La comparaison de voiles")
+    if len(ids) < 2:
+        raise ComparaisonRefusee("Comparer demande au moins deux fiches.")
+    if len(set(int(identifiant) for identifiant in ids)) != len(ids):
+        raise ComparaisonRefusee("Comparer une extraction à elle-même n'a pas de sens.")
+    with index.connect() as connexion:
+        with connexion.cursor() as curseur:
+            fiches = [_charger_extraction(curseur, int(identifiant)) for identifiant in ids]
+            return comparer_plusieurs(
+                fiches,
+                noms_modeles=[_nom_modele(curseur, fiche) for fiche in fiches],
+                corrections=[_nombre_corrections(curseur, int(identifiant)) for identifiant in ids],
+                codes_fiches=[_code_fiche_metier(curseur, fiche) for fiche in fiches],
+                id_reference=id_reference,
+            )
+
+
+# ---------------------------------------------------------------------------
 # Lecture PostgreSQL : couple comparé et candidats même modèle + type
 # ---------------------------------------------------------------------------
 

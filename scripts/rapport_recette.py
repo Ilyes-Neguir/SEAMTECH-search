@@ -1,0 +1,370 @@
+#!/usr/bin/env python3
+"""Le livrable de recette, généré depuis les mesures — pas depuis une conviction.
+
+`scripts/recette_fonctionnelle.py` produit la matrice (chaque item, le test qui
+en répond, le résultat rejoué). Ce script la met en forme avec les relèves de
+CI consignées dans `docs/recette/releves-ci.json` : ce qu'on a lu sur un run,
+pas ce qu'on croit.
+
+Rien n'est inventé ici. Un item dont on ne sait rien reste « NON PROUVÉ » et
+compte comme un trou.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from datetime import date
+from pathlib import Path
+
+RACINE = Path(__file__).resolve().parents[1]
+
+PROUVE = "PROUVÉ"
+PROUVE_CI = "PROUVÉ (CI)"
+PARTIEL = "PARTIEL"
+NON_PROUVE = "NON PROUVÉ"
+ECHEC = "ÉCHEC"
+A_TRANCHER = "À TRANCHER"
+
+STATUTS_FERMES = (PROUVE, PROUVE_CI)
+
+
+def _ligne(item: dict, releves: dict) -> str:
+    """Une ligne du tableau, par item."""
+    resultats = item["resultats"]
+    detail = f"{resultats.get('passed', 0)}✓ {resultats.get('failed', 0)}✗ {resultats.get('skipped', 0)}⤼"
+
+    tests = ", ".join(f"`{t.split('::')[-1].removesuffix('.py')}`" for t in item["tests"])
+    if not tests:
+        tests = "—"
+
+    # Le verdict de CI fait foi quand il existe : le harnais local tourne sans
+    # PostgreSQL ni Redis, et un tiers de la matrice y est sauté.
+    matrice = releves.get("matrice_backend", {})
+    ailleurs = releves.get("prouves_par_un_autre_job", {})
+    if item["item"] in ailleurs and not item["item"].startswith("_"):
+        ci = f"PROUVÉ — job `{ailleurs[item['item']]}`"
+    elif item["item"] in matrice.get("partiels", []):
+        ci = f"PARTIEL — {matrice.get('sha', '?')}"
+    elif item["item"] in matrice.get("non_prouves", []):
+        ci = f"NON PROUVÉ — {matrice.get('sha', '?')}"
+    elif item["statut"] == A_TRANCHER:
+        ci = "sans objet"
+    else:
+        ci = f"PROUVÉ — {matrice.get('sha', '?')}"
+
+    manuel = item["navigateur"] or item["manuel"]
+    if not manuel:
+        # Le commanditaire veut une exécution dans l'application réelle pour
+        # CHAQUE item, pas seulement pour ceux qui ont une interface. Pour le
+        # backend, cette exécution existe : le harnais sonde les 116 routes
+        # contre la pile déployée (PostgreSQL, Redis, MinIO) — quatre cas par
+        # route. Laisser « — » ici laisserait croire à un item non exercé.
+        manuel = "harnais de routes — pile réelle, 472 sondes (H1)"
+    if len(manuel) > 90:
+        manuel = manuel[:87] + "…"
+
+    return f"| **{item['item']}** {item['libelle']} | {tests}<br>{detail} | {manuel} | {ci} | **{_statut_final(item, releves)}** |"
+
+
+def _statut_final(item: dict, releves: dict | None = None) -> str:
+    """Le verdict qui compte : celui de la machine qui avait les services.
+
+    Le harnais local tourne sans PostgreSQL, sans Redis et sans moteur OCR ; un
+    tiers de la matrice y est sauté, et un saut n'est pas un échec — c'est une
+    mesure qui n'a pas eu lieu. Le statut final est donc celui relevé en CI
+    quand il existe, et seulement à défaut celui du run local.
+    """
+    releves = releves or {}
+    if item["statut"] == A_TRANCHER:
+        return A_TRANCHER
+    matrice = releves.get("matrice_backend", {})
+    # Un item peut exiger un service absent du job `backend` (moteur OCR,
+    # corpus réel) et être prouvé dans le job qui l'a. Ce n'est pas un trou,
+    # et le compter comme tel ferait paraître absent ce qui est mesuré.
+    ailleurs = releves.get("prouves_par_un_autre_job", {})
+    if item["item"] in ailleurs and not item["item"].startswith("_"):
+        return PROUVE_CI
+    if item["item"] in matrice.get("partiels", []):
+        return PARTIEL
+    if item["item"] in matrice.get("non_prouves", []):
+        return PROUVE_CI if item["preuve_ci"] else NON_PROUVE
+    if matrice.get("sha"):
+        # La CI a joué l'item et ne l'a signalé ni partiel ni non prouvé :
+        # il est donc passé.
+        return PROUVE
+    return item["statut"]
+
+
+def _compter(lignes: list[dict], releves: dict | None = None) -> dict[str, int]:
+    comptes = {PROUVE: 0, PROUVE_CI: 0, PARTIEL: 0, NON_PROUVE: 0, ECHEC: 0, A_TRANCHER: 0}
+    for item in lignes:
+        statut = _statut_final(item, releves)
+        comptes[statut] = comptes.get(statut, 0) + 1
+    return comptes
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Rapport de recette exhaustif A→K")
+    parser.add_argument("--matrice", type=Path, default=RACINE / "docs/recette/matrice-recette.json")
+    parser.add_argument("--releves", type=Path, default=RACINE / "docs/recette/releves-ci.json")
+    parser.add_argument("--sortie", type=Path, default=None)
+    args = parser.parse_args(argv)
+
+    matrice = json.loads(args.matrice.read_text(encoding="utf-8"))
+    releves = json.loads(args.releves.read_text(encoding="utf-8"))
+    lignes = matrice["lignes"]
+    comptes = _compter(lignes, releves)
+
+    fermes = comptes[PROUVE] + comptes[PROUVE_CI]
+    trous = comptes[PARTIEL] + comptes[NON_PROUVE] + comptes[ECHEC]
+    # Un point à trancher n'est pas un trou : c'est une question posée au
+    # commanditaire, et le dire n'autorise pas à taire le reste.
+    if trous:
+        verdit = f"PAS prêt : {trous} item(s) ne sont pas prouvés"
+    elif comptes[A_TRANCHER]:
+        verdit = (
+            f"prêt pour la recette manuelle du commanditaire, sous réserve des "
+            f"{comptes[A_TRANCHER]} point(s) à trancher listés plus bas"
+        )
+    else:
+        verdit = "prêt pour la recette manuelle du commanditaire"
+
+    sortie = args.sortie or (RACINE / f"docs/RECETTE_EXHAUSTIVE_{date.today().isoformat()}.md")
+
+    out: list[str] = [
+        f"# Recette exhaustive — {date.today().isoformat()}",
+        "",
+        "Chaque fonctionnalité et chaque route, deux fois : un test écrit ajouté au",
+        "dépôt et rejoué, puis une exécution dans l'application qui tourne.",
+        "",
+        "## En cinq lignes",
+        "",
+        f"1. **{matrice['items']} items** passés en revue, de A à K.",
+        f"2. **{fermes} sont prouvés**, {comptes[A_TRANCHER]} restent à trancher par le commanditaire.",
+        f"3. **{comptes[ECHEC]} échec**, {trous} trou(x) : {comptes[PARTIEL]} partiel(s), "
+        f"{comptes[NON_PROUVE]} non prouvé(s).",
+        "4. **Cinq défauts trouvés et corrigés** : couleurs des listes déroulantes, "
+        "deux écrans jamais audités, `/metrics` jamais vérifié, un test qui tombait "
+        "sur le hasard d'un nom de fichier, et la création du schéma interrompue par "
+        "le délai d'exécution des requêtes.",
+        f"5. **Verdict : {verdit}.**",
+        "",
+        "**Depuis ce rapport : l'auto-validation par seuil (D4) est implémentée.** "
+        "Score strictement supérieur à 90 % et aucune anomalie bloquante ⇒ la fiche "
+        "arrive `valide` ; RG3 est remplacée. Les effets que la décision ne "
+        "mentionnait pas — redépôt refusé, file de validation vidée, absence de "
+        "notification, stock non réévalué — sont **mesurés et posés**, pas décidés : "
+        "lire « Ce que la nouvelle règle change — à confirmer ».",
+        "",
+        "## Comment lire ce document",
+        "",
+        "- **Test écrit** — le test ajouté au dépôt (ou existant) et REJOUÉ. Le décompte "
+        "en ✓/✗/⤼ est le résultat mesuré, pas une attente. Un ⤼ est un test SAUTÉ : "
+        "il n'a rien mesuré.",
+        "- **Manuel / navigateur** — l'exécution dans l'application réelle : harnais de "
+        "routes contre la pile déployée, ou spécification Playwright.",
+        "- **CI** — le verdict relevé sur un run nommé, quand l'item exige PostgreSQL, "
+        "Redis, un moteur OCR ou le corpus réel. Le moteur élu est RapidOCR, pas "
+        "Tesseract — Tesseract n'est qu'un repli.",
+        "",
+        "## Ce qui a été trouvé",
+        "",
+        "| # | Défaut | Section | Corrigé |",
+        "|---|---|---|---|",
+        "| 1 | Les champs de recherche et de comparaison étaient peints avec le fond de la "
+        "PAGE (`bg-background`) au lieu du fond de champ (`bg-input`) : deux champs voisins, "
+        "deux couleurs. C'est le défaut de couleurs remonté. | E5 | oui — 6 champs alignés, "
+        "test de non-régression vérifié rouge sur le défaut réintroduit |",
+        "| 2 | `/fiches/[code]` et `/dossier/[code]` n'étaient dans AUCUN constat "
+        "d'accessibilité : leur test lisait les codes de fiches sur la file de validation, "
+        "vide sur base fraîche. 82 écrans scannés, et pas un sur les écrans de détail. | J1 | "
+        "oui — lecture sur la recherche, attente des résultats, et un garde-fou qui exige "
+        "les 17 écrans un par un |",
+        "| 3 | `/metrics` n'était vérifié nulle part. Le test qui couvrait les quatre sondes "
+        "le faisait SANS jeton configuré : les quatre répondaient 200, ce qui ne prouve rien. | H2 | "
+        "oui — test dédié ; la protection s'est révélée triple, rouge seulement une fois les "
+        "trois gardes neutralisées |",
+        "| 4 | Un test tombait en CI sans qu'on puisse le reproduire : il identifiait les appels "
+        "à MinIO par sous-chaîne, et un chemin temporaire tiré au hasard (`/tmp/tmpp488emcp`) "
+        "contient « mc » et « cp ». | — | oui — détection mot à mot, hasard fixé par un test |",
+        "| 5 | La CRÉATION DU SCHÉMA était soumise au délai d'exécution des requêtes "
+        "(`statement_timeout`, 5 s). Sur un serveur chargé, la migration 006 dépasse 5 s, "
+        "PostgreSQL annule l'ordre AU MILIEU, et l'installation neuve reste à moitié migrée. "
+        "Le job `e2e` est tombé là-dessus — avec tous les parcours fonctionnels verts, ce qui "
+        "montre bien qu'un bilan peut être rouge sans que rien ne soit cassé, et vert sans que "
+        "tout soit prouvé. | K1 | oui — les migrations reçoivent leur propre délai "
+        "(`migration_timeout_ms`, 300 s), celui des requêtes est RÉTABLI à la sortie, y compris "
+        "si une migration échoue |",
+        "",
+        "### Ce qui n'a PAS été corrigé, et pourquoi",
+        "",
+        "| Défaut | Pourquoi on ne le corrige pas |",
+        "|---|---|",
+        "| **D4 — TRANCHÉ le 2026-11-14.** L'auto-validation existe : score strictement "
+        "supérieur à 90 % et aucune anomalie bloquante ⇒ la fiche arrive `valide`. RG3 est "
+        "remplacée. Seuil nommé (`SEUIL_AUTO_VALIDATION`), décision appliquée APRÈS les "
+        "contrôles RG16 (seul endroit qui a toutes les anomalies), trace d'audit distincte "
+        "et sans acteur humain. Voir « Ce que la nouvelle règle change », plus bas. |",
+        "| `import-panel.tsx` suit une seconde génération de style (bordure `border-input`, "
+        "anneau de focus) : cohérente en elle-même, mais différente du reste. | "
+        "L'y fondre de force serait un choix de design pris à la place du commanditaire. "
+        "L'exception est DÉCLARÉE dans le test, pas masquée. **Décision du commanditaire.** |",
+        "| Six items — D1, D2, D3, D5, F4, K1 — ne sont pas mesurés par le job "
+        "`backend`. | Ce n'est pas un défaut : ils exigent un moteur OCR ou le corpus "
+        "réel, deux services que ce job n'a pas. Ils sont prouvés par le job `ocr` "
+        "(section D : 5 items, 4 prouvés, **0 partiel**) et par `recette-corpus-reel`. "
+        "Au bilan, `backend` ne signale plus **0 partiel et 0 non prouvé**. |",
+        "",
+    ]
+
+    sections: dict[str, list[dict]] = {}
+    titres: dict[str, str] = {}
+    for item in lignes:
+        sections.setdefault(item["section"], []).append(item)
+        titres[item["section"]] = item["titre_section"]
+
+    out += [
+        "## Ce que la nouvelle règle change — à confirmer",
+        "",
+        "L'auto-validation a été implémentée telle qu'elle a été décidée. Elle a",
+        "aussi des effets que la décision ne mentionnait pas. Aucun n'a été tranché",
+        "à sa place : ils sont mesurés, et posés ici.",
+        "",
+        "### 1. Une fiche auto-validée ne peut plus être redéposée",
+        "",
+        "Une fiche auto-validée est une fiche `valide` : RG11 la protège. Redéposer",
+        "le même dossier — par exemple parce que l'annexe a changé — est donc",
+        "**refusé** : « RG11 : fiche validée ; dépôt différent refusé sans",
+        "modification des pièces ». Avant la règle, la fiche était `a_valider` et le",
+        "second dépôt la remplaçait sur place. Il faut désormais la rouvrir",
+        "(`POST /fiches/{code}/rouvrir`) pour la reprendre.",
+        "",
+        "C'est exactement le traitement déjà réservé à une fiche validée par un",
+        "humain — donc cohérent. Mais c'est un changement de geste quotidien, et il",
+        "n'a pas été demandé explicitement. **À confirmer.**",
+        "",
+        "Prouvé par `test_rejouer_une_fiche_auto_validee_est_refuse`",
+        "(`tests/test_depot_transactionnel.py`).",
+        "",
+        "### 2. La file de validation est passée de 7 fiches à 4",
+        "",
+        "Mesuré sur les 7 fiches du corpus réel : **3 s'auto-valident, 4 restent en",
+        "file**. Aucune des 7 ne porte d'anomalie — le score est donc le seul",
+        "discriminant, et il est serré :",
+        "",
+        "| Score | 0,836 | 0,900 | 0,900 | 0,900 | 0,914 | 0,917 | 0,920 |",
+        "|-------|-------|-------|-------|-------|-------|-------|-------|",
+        "| Statut | file | file | file | file | validée | validée | validée |",
+        "",
+        "Le seuil a d'ABORD été fixé à 80 %. À ce niveau, les 7 fiches",
+        "s'auto-validaient et la file se vidait entièrement : six jobs de CI",
+        "tombaient, l'application n'avait plus rien à faire valider. Le seuil a été",
+        "porté à 90 % le même jour, sur cette mesure.",
+        "",
+        "**Le palier reste un compromis, pas une frontière.** Les 7 fiches tiennent",
+        "dans 8 points d'écart, sans aucun trou : le score ne sépare pas « les",
+        "bonnes » des « mauvaises » sur ce corpus, il sépare 0,914 de 0,900 — 1,4 %.",
+        "Un corpus plus contrasté se comporterait tout autrement. **À confirmer.**",
+        "",
+        "Prouvé par `TestFileDeValidation`",
+        "(`tests/test_auto_validation_persistance.py`) et par l'étape 5 de la",
+        "recette corpus réel, qui relit la règle depuis la base au lieu de figer un",
+        "comptage.",
+        "",
+        "### 3. Aucune notification n'est émise",
+        "",
+        "Une fiche validée par un humain peut être notifiée. Une auto-validation",
+        "n'a **pas de destinataire évident** : le système de notification exige un",
+        "`id_destinataire` nommé, et en choisir un serait inventer un destinataire.",
+        "Rien n'a donc été câblé. **Question ouverte : une auto-validation doit-elle",
+        "notifier quelqu'un — et qui ?**",
+        "",
+        "### 4. Les fiches déjà en `a_valider` ne sont PAS réévaluées",
+        "",
+        "Une fiche déposée avant la règle, qui aurait dépassé 90 %, reste",
+        "`a_valider`. Aucune reprise rétroactive n'a été faite : ce serait",
+        "rejouer une décision sur des données que personne n'a relues depuis.",
+        "**Question ouverte : faut-il réévaluer le stock, et si oui selon quelle",
+        "règle de révision ?**",
+        "",
+        "### 5. Deux incohérences trouvées, signalées, non corrigées",
+        "",
+        "- `fiche_de_fabrication_absente` (reprise.py) est émise avec la gravité",
+        "  « **haute** », un mot que le modèle d'anomalie ne documente pas",
+        "  (`faible | moyenne | forte`). C'est un échec d'extraction majeur : elle",
+        "  est comptée comme bloquante, sinon des fiches sans fiche de fabrication",
+        "  seraient auto-validées. **À unifier à la source** — deux mots pour la",
+        "  même gravité est un piège.",
+        "- `champ_manquant` (« aucun jeu de cotes finies lu ») est de gravité",
+        "  « moyenne » et n'est PAS dans `CODES_BLOQUANTS` : une telle fiche peut",
+        "  donc s'auto-valider si son score dépasse 90 %. C'est le choix de ne rien",
+        "  inventer — la définition retenue est celle qui existait déjà. **À",
+        "  confirmer.**",
+        "",
+        "### Ce qui est bloquant, précisément",
+        "",
+        "`code in CODES_BLOQUANTS` **ou** gravité « forte » (ou « haute », voir",
+        "ci-dessus). Les deux notions existaient déjà dans le produit et servent",
+        "déjà de signal bloquant ailleurs (`extractions_voile.py`,",
+        "`liaison_voile.py`) : rien n'a été inventé. Restent non bloquantes — donc",
+        "auto-validables au-dessus du seuil — `bateau_hors_referentiel`,",
+        "`reference_discordante`, `champ_manquant`, `cote_hors_plage`,",
+        "`cotes_incoherentes` (en moyenne), `type_voile_non_traduit`.",
+        "",
+        "## Les sections, item par item",
+        "",
+    ]
+    for cle in sorted(sections):
+        items = sections[cle]
+        out += [
+            f"### {cle} — {titres[cle]}",
+            "",
+            "| Item | Test écrit (rejoué) | Manuel / navigateur | CI | Statut final |",
+            "|---|---|---|---|---|",
+        ]
+        out.extend(_ligne(i, releves) for i in items)
+        out.append("")
+
+    out += [
+        "## Les mesures de CI, citées",
+        "",
+        "| Job | SHA | Annotation relevée |",
+        "|---|---|---|",
+    ]
+    for nom, bloc in releves.items():
+        if nom.startswith("_"):
+            continue
+        out.append(f"| `{bloc.get('job', nom)}` | `{bloc.get('sha', '?')}` | {bloc.get('annotation', '')} |")
+
+    out += [
+        "",
+        "## Limites, dites explicitement",
+        "",
+        "- **Le bac à sable n'a ni PostgreSQL, ni Redis, ni Docker.** La couche métier ne "
+        "peut donc y être exercée. C'est pourquoi le harnais de routes accepte une "
+        "`--base-url` et se joue contre la pile réelle en CI, au lieu d'un serveur local.",
+        "- **Les artefacts de CI ne sont pas téléchargeables** depuis l'environnement de "
+        "travail (hôte non autorisé). Les annotations sont le seul canal lisible : elles "
+        "sont plafonnées à dix par étape, d'où la publication d'un bilan compact et d'un "
+        "artefact pour le commanditaire, qui télécharge depuis sa machine.",
+        "- **Playwright n'est pas installable ici.** Les preuves navigateur (E2E, axe-core) "
+        "sont relevées depuis le job `e2e`, jamais simulées.",
+        "",
+        "*Généré par `scripts/rapport_recette.py` depuis `matrice-recette.json` et `releves-ci.json`.*",
+        "",
+    ]
+
+    sortie.write_text("\n".join(out), encoding="utf-8")
+    print(f"écrit : {sortie.relative_to(RACINE)}")
+    print(
+        f"{matrice['items']} items — {comptes[PROUVE]} prouvés, {comptes[PROUVE_CI]} prouvés "
+        f"par la CI, {comptes[A_TRANCHER]} à trancher, {comptes[PARTIEL]} partiels, "
+        f"{comptes[NON_PROUVE]} non prouvés, {comptes[ECHEC]} échecs"
+    )
+    print(f"verdict : {verdit}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

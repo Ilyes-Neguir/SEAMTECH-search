@@ -158,7 +158,15 @@ def test_timeout_crawler_ne_journalise_pas_le_chemin(tmp_path, monkeypatch, capl
             pass
 
     monkeypatch.setattr(crawler.subprocess, 'Popen', lambda *args, **kwargs: ProcessusExpire())
-    monkeypatch.setattr(crawler.os, 'killpg', lambda *args: None)
+    # ``raising=False``, et c'est volontaire : Windows n'a PAS ``os.killpg``,
+    # et le produit le sait déjà (``crawler.py`` : ``if os.name == "posix":
+    # killpg(...) else process.kill()``). Écrire l'attribut sans cette
+    # précaution faisait échouer l'épreuve AVANT même qu'elle ne mesure quoi
+    # que ce soit — le secret n'était plus protégé par une preuve, mais par
+    # une panne d'échafaudage. Ici, sous Windows, c'est ``process.kill()``
+    # qui s'exerce, et ``ProcessusExpire.kill()`` le neutralise : l'épreuve
+    # mesure la même chose partout.
+    monkeypatch.setattr(crawler.os, 'killpg', lambda *args: None, raising=False)
     with caplog.at_level(logging.WARNING, logger=crawler.LOGGER.name):
         resultat = crawler._extract_in_process(cible, AppConfig(root_paths=[tmp_path]))
     assert resultat.status == 'timeout'

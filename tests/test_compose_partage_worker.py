@@ -38,7 +38,7 @@ from pathlib import Path
 import pytest
 
 RACINE = Path(__file__).resolve().parents[1]
-FICHE = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+FICHE = RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 URL_WEB = "http://127.0.0.1:8000"
 
 

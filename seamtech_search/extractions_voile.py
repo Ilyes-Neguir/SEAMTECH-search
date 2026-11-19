@@ -521,11 +521,17 @@ def construire_extraction_voile(
     trace_bateau = _trace_preferee(traces, "fiche.bateau")
     modele_bateau_brut = _modele_bateau_depuis_fiche(fiche, trace_bateau)
     trace_designation = _trace_preferee(traces, "fiche.designation")
-    designation_brute = _texte(trace_designation.valeur_brute) if trace_designation else None
-    type_voile = _texte(fiche.type_voile_libelle)
-    gamme = _texte(fiche.gamme)
+    designation_brute = norm.forme_canonique(trace_designation.valeur_brute) if trace_designation else None
+    # Lot 1 — les axes de comparaison sont NETTOYÉS à l'écriture : un espace en
+    # double ou une virgule pendante feraient deux groupes là où il n'y en a
+    # qu'un, et une comparaison qui n'a pas lieu. Le nettoyage s'arrête là :
+    # ni la casse ni le sens ne sont décidés ici (voir forme_canonique).
+    # Contre-partie volontaire : ``modele_bateau_brut`` reste tel que lu,
+    # frontière de lot écrite en tête de ce module.
+    type_voile = norm.forme_canonique(fiche.type_voile_libelle)
+    gamme = norm.forme_canonique(fiche.gamme)
     if trace_designation is not None and trace_designation.valeur_normalisee:
-        morceaux = [morceau.strip() for morceau in trace_designation.valeur_normalisee.split("|", 1)]
+        morceaux = [norm.forme_canonique(morceau) for morceau in trace_designation.valeur_normalisee.split("|", 1)]
         # Seule une décomposition explicite « type | gamme » permet de
         # déduire le type de la trace. Une désignation inconnue en un seul
         # morceau reste une gamme/texte à reprendre, pas un type inventé.
@@ -535,7 +541,7 @@ def construire_extraction_voile(
             if gamme is None and morceaux[1]:
                 gamme = morceaux[1]
     if designation_brute is None and trace_designation is not None:
-        designation_brute = _texte(trace_designation.valeur_normalisee)
+        designation_brute = norm.forme_canonique(trace_designation.valeur_normalisee)
 
     materiaux: list[MateriauExtractionVoile] = []
     for materiau in fiche.materiaux:
@@ -903,7 +909,7 @@ def evaluer_extraction_or(
     Les clés Lot 3a lisent la projection normalisée. Si la fiche source est
     fournie, les clés historiques du banc (``cotes.*``, ``materiau.*``…)
     sont déléguées à l'évaluateur existant, afin que le rapport d'or mesure
-    aussi les 74 cibles 7792 sans dupliquer leur sémantique.
+    aussi les 74 cibles 1042 sans dupliquer leur sémantique.
     """
     details: list[dict[str, Any]] = []
     corrects = 0

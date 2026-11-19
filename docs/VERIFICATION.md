@@ -29,8 +29,8 @@ Preuves :
   téléchargement autorisé en **1 clic** avec octets `%PDF` relus ; matrice
   navigation × rôle (secours = admin d'urgence documenté, lecture,
   utilisateur, admin) — chaque lien promis ouvert sans refus ; chaîne
-  Extractions → Confiance… → fiche source → fiche métier 7792-SO.
-- PostgreSQL 317/0 (aucune migration dans ce lot), parcours 7792-SO 578 ms.
+  Extractions → Confiance… → fiche source → fiche métier 1042-EX.
+- PostgreSQL 317/0 (aucune migration dans ce lot), parcours 1042-EX 578 ms.
 
 ```bash
 pytest -q tests/test_lot6_coherence_ui.py
@@ -78,7 +78,7 @@ preuve centrale est `tests/test_lot5_confiance_reutilisation.py` :
   évaluation persistée relue (migration 030, contrainte de cohérence
   score/verdict), refus sans modèle lié ; rôles 401/403/200/404/422.
 - Parcours navigateur `frontend/e2e/lot5-confiance.spec.ts` (garde CI
-  `report-lot5.json`, 3/3 au premier essai) : vraie 7792-SO évaluée contre
+  `report-lot5.json`, 3/3 au premier essai) : vraie 1042-EX évaluée contre
   5 voiles de référence semées — verdict compatible justifié et persisté ;
   lecture sans bouton d'évaluation ; secours refusé. Suite PostgreSQL
   globale : 317 passés / 0 sauté.
@@ -186,7 +186,7 @@ Branche : `arena/b02ed560-seamtech-search` ; implémentation prouvée au SHA
   rescaler une valeur nue hors plage et refus d'une unité incompatible ;
 - `modele_bateau_brut` conservé tel que lu (`BAVARIA-45`, `29er (15')`),
   provenance valeur brute/canonique, méthode, confiance, page et zone ;
-- PDF réel 7792-SO : Lot 3a 17/17 et vérité historique 74/74 ; génois
+- PDF réel 1042-EX : Lot 3a 17/17 et vérité historique 74/74 ; génois
   synthétique : 11/11 ; rapport CLI global 102/102 ;
 - PostgreSQL réel : écriture de fiche idempotente, enregistrement autonome
   lié à un document, dépôt de dossier liant l'extraction au PDF source et à

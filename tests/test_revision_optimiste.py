@@ -40,6 +40,7 @@ from typing import Any, Iterator
 
 import pytest
 
+from seamtech_search.fiches import auto_validation
 from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -49,13 +50,38 @@ pytestmark = pytest.mark.postgres  # couche métier PostgreSQL uniquement (§17.
 
 
 # ---------------------------------------------------------------------------
-# Base jetable + une fiche réelle déposée par le moteur du Lot C (RG3)
+# Base jetable + une fiche réelle déposée par le moteur du Lot C
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module", autouse=True)
+def seuil_auto_validation_hors_atteinte() -> Iterator[None]:
+    """Porte le seuil d'auto-validation hors d'atteinte pour TOUT ce module.
+
+    Ce module éprouve le verrou de révision optimiste sur la CORRECTION et
+    la validation humaines : il lui faut une fiche en attente. Or la fiche
+    réelle déposée par la fixture ci-dessous score 0,929 : depuis
+    l'auto-validation au seuil de 90 %, elle arrive « valide », et RG11
+    refuse alors toute correction (« rouvrez-la d'abord »).
+
+    Le seuil est porté à 1,0 — inatteignable, la comparaison étant
+    STRICTE — et non contourné par un patch de la fonction. Portée MODULE
+    et déclarée AVANT `base_revision` : le dépôt a lieu dans cette autre
+    fixture module ; un patch de portée fonction s'appliquerait trop tard.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(auto_validation, "SEUIL_AUTO_VALIDATION", 1.0)
+        yield
 
 
 @pytest.fixture(scope="module")
 def base_revision() -> Iterator[dict[str, Any]]:
-    """Base jetable (migrations + gabarits) et UNE fiche ``a_valider`` réelle."""
+    """Base jetable (migrations + gabarits) et UNE fiche ``a_valider`` réelle.
+
+    Maintenue en attente par ``seuil_auto_validation_hors_atteinte`` : sans
+    elle, l'auto-validation la validerait à l'arrivée et il n'y aurait plus
+    rien à corriger ni à valider.
+    """
     import psycopg2
     from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 

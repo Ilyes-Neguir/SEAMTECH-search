@@ -74,7 +74,7 @@ class TestBooleensEtTextes:
 
     def test_nom_et_detail_parentheses(self) -> None:
         assert norm.separer_nom_et_detail("29er (15')") == ("29er", "15'")
-        assert norm.separer_nom_et_detail("Sailonet (Cruette)") == ("Sailonet", "Cruette")
+        assert norm.separer_nom_et_detail("Exemplia (Demo)") == ("Exemplia", "Demo")
         assert norm.separer_nom_et_detail("Sun 2000") == ("Sun 2000", None)
 
     def test_scinder_sur_tirets_medians(self) -> None:

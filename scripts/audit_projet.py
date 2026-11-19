@@ -6,8 +6,11 @@ Chaque contrôle ci-dessous correspond à un incident réel du projet (21/09/202
   1. `.github/workflows/ci.yml` présent          → le fichier avait été déplacé à la
      racine `workflows/ci.yml` : GitHub Actions ne tournait plus, et la fusion
      aurait retiré la CI de `main`.
-  2. Fixture 7792 = DOCUMENT RÉEL (SHA-256)      → le gabarit était réglé sur une
-     reconstruction ; 16,7 % de champs lus au lieu de 100 %.
+  2. Fixture 1042 = ÉQUIVALENT SYNTHÉTIQUE       → le gabarit était réglé sur une
+     reconstruction ; 16,7 % de champs lus au lieu de 100 %. Depuis la purge
+     (vague 1), le document réel du commanditaire ne doit plus revenir dans
+     le dépôt : le contrôle prouve son absence par son empreinte, et la
+     fixture synthétique régénérable par sa présence et sa validité PDF.
   3. Aucun `except: pass`                        → une faute de frappe avalée
      silencieusement a fait recréer des bases pendant toute une session.
   4. Verrou de calibration présent               → la validation groupée doit
@@ -37,7 +40,10 @@ RACINE = Path(__file__).resolve().parents[1]
 if str(RACINE) not in sys.path:
     sys.path.insert(0, str(RACINE))
 
-# Empreinte du document client réel (166 990 octets, 1 page).
+# Empreinte du document client réel du commanditaire (166 990 octets, 1 page),
+# PURGÉ du dépôt (vague 1, 2026-11-17). Elle n'est plus un critère d'identité
+# de la fixture — c'est un critère d'EXCLUSION : si un fichier du dépôt porte
+# cette empreinte, le document réel est revenu et la purge est à refaire.
 SHA_FICHE_REELLE = "43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40"
 
 FICHIERS_DE_TEST_IMPOSES = (
@@ -72,16 +78,37 @@ def controle_ci() -> None:
 
 
 def controle_fixture() -> None:
-    print("\n2. Fixture = document client réel (et non une reconstruction)")
-    fixture = RACINE / "sample_data" / "CLIENT-7792-SO" / "fiche-7792-SO_ffab.pdf"
+    # Incident d'origine (21/09/2026) : le gabarit était réglé sur une
+    # reconstruction de la fiche ; 16,7 % des champs lus au lieu de 100 %.
+    # Le contrôle d'alors exigeait que la fixture SOIT le document réel.
+    #
+    # Depuis la purge (vague 1), le document réel du commanditaire ne doit
+    # plus être dans le dépôt du tout : l'exiger serait exiger une fuite de
+    # données. La fixture est l'ÉQUIVALENT SYNTHÉTIQUE régénérable
+    # (scripts/generer_fiche_reference_synthetique.py), et l'invariant
+    # « 100 % des champs lus » est prouvé par la suite de tests, qui tourne
+    # AVANT cet audit en CI (test_banc_etendu_74_cibles_100_pourcent, et la
+    # preuve de régénération 74/74). Ce contrôle garde donc ce qui reste
+    # vérifiable sans exécuter la suite : la fixture est là, elle est un PDF
+    # valide, et le document réel purgé n'est PAS revenu.
+    print("\n2. Fixture = équivalent synthétique (document réel purgé)")
+    fixture = RACINE / "sample_data" / "CLIENT-1042-EX" / "fiche-1042-EX_ffab.pdf"
     if not fixture.is_file():
-        controler("fixture 7792 présente", False, str(fixture))
+        controler("fixture 1042 présente", False, str(fixture))
         return
-    empreinte = hashlib.sha256(fixture.read_bytes()).hexdigest()
-    controler("SHA-256 = document réel", empreinte == SHA_FICHE_REELLE,
-              "" if empreinte == SHA_FICHE_REELLE else f"obtenu {empreinte[:16]}…")
-    controler("taille = 166 990 octets", fixture.stat().st_size == 166990,
-              f"{fixture.stat().st_size} octets")
+    contenu = fixture.read_bytes()
+    empreinte = hashlib.sha256(contenu).hexdigest()
+    controler(
+        "document réel du commanditaire purgé (empreinte ≠ document purgé)",
+        empreinte != SHA_FICHE_REELLE,
+        "le document client réel est revenu dans le dépôt — purge à refaire"
+        if empreinte == SHA_FICHE_REELLE else "empreinte différente du document purgé",
+    )
+    controler(
+        "fixture synthétique régénérable (PDF valide)",
+        contenu.startswith(b"%PDF"),
+        f"{len(contenu)} octets" + ("" if contenu.startswith(b"%PDF") else " — en-tête PDF absent"),
+    )
 
 
 def controle_exceptions() -> None:
@@ -122,25 +149,25 @@ def controle_fichiers_de_test() -> None:
 
 def controle_verite() -> None:
     print("\n6. Source unique de vérité terrain (74 cibles)")
-    chemin_paquet = RACINE / "seamtech_search" / "fiches" / "verite_7792.py"
-    controler("seamtech_search/fiches/verite_7792.py présent", chemin_paquet.is_file())
+    chemin_paquet = RACINE / "seamtech_search" / "fiches" / "verite_reference.py"
+    controler("seamtech_search/fiches/verite_reference.py présent", chemin_paquet.is_file())
     if chemin_paquet.is_file():
         try:
-            from docs.verite_terrain.VERITE_7792_COMPLETE import VERITE_7792 as V_DOCS
-            from seamtech_search.fiches.verite_7792 import VERITE_7792
+            from docs.verite_terrain.VERITE_REFERENCE_COMPLETE import VERITE_REFERENCE as V_DOCS
+            from seamtech_search.fiches.verite_reference import VERITE_REFERENCE
 
-            controler("source unique contient 74 cibles", len(VERITE_7792) == 74, f"{len(VERITE_7792)} cibles")
-            controler("docs/ ré-exporte sans dérive", VERITE_7792 == V_DOCS, "égalité stricte")
+            controler("source unique contient 74 cibles", len(VERITE_REFERENCE) == 74, f"{len(VERITE_REFERENCE)} cibles")
+            controler("docs/ ré-exporte sans dérive", VERITE_REFERENCE == V_DOCS, "égalité stricte")
 
-            chemin_json = RACINE / "docs" / "verite_terrain" / "7792-SO_ffab_complete.json"
-            controler("docs/verite_terrain/7792-SO_ffab_complete.json présent", chemin_json.is_file())
+            chemin_json = RACINE / "docs" / "verite_terrain" / "1042-EX_ffab_complete.json"
+            controler("docs/verite_terrain/1042-EX_ffab_complete.json présent", chemin_json.is_file())
             if chemin_json.is_file():
                 donnees_json = json.loads(chemin_json.read_text(encoding="utf-8"))
-                attendu_json = donnees_json.get("fiche-7792-SO_ffab.pdf", {}).get("attendu")
+                attendu_json = donnees_json.get("fiche-1042-EX_ffab.pdf", {}).get("attendu")
                 controler(
-                    "JSON attendu == VERITE_7792 (égalité stricte 74 cibles)",
-                    attendu_json == VERITE_7792,
-                    "74 cibles conformes" if attendu_json == VERITE_7792 else "dérive détectée",
+                    "JSON attendu == VERITE_REFERENCE (égalité stricte 74 cibles)",
+                    attendu_json == VERITE_REFERENCE,
+                    "74 cibles conformes" if attendu_json == VERITE_REFERENCE else "dérive détectée",
                 )
         except (ImportError, AttributeError, json.JSONDecodeError, OSError) as exc:
             controler("contrôle vérité terrain valide", False, str(exc))

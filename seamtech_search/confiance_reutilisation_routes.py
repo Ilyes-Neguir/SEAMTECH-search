@@ -13,17 +13,23 @@ import logging
 from typing import Annotated, Any
 
 from fastapi import Header, HTTPException, Query
+from pydantic import ValidationError
 
 from .audit import record_audit_event
 from .comptes.comptes import ROLE_APPROBATEUR
 from .confiance_reutilisation import (
     ConfianceRefusee,
+    evaluer_cible_population,
     evaluer_extraction,
     lister_evaluations,
     population_par_modele,
 )
+from .extractions_voile import ExtractionVoile
 from .liaison_voile import ExtractionIntrouvable
 from .securite_requetes import ActeurRequete, exiger_acteur_nominatif
+
+#: Dimensions qu'une cible peut annoncer, dans l'ordre du métier.
+DIMENSIONS_CIBLE = ("slu_m", "sle_m", "sf_m", "shw_m", "spa_m2", "tetiere_m", "poids_kg")
 
 LOGGER = logging.getLogger("seamtech_search.confiance_reutilisation_routes")
 
@@ -121,6 +127,63 @@ def enregistrer_routes_confiance_reutilisation(
             code_statut=200,
         )
         return resultat
+
+    @app.post("/confiance-reutilisation/cible")
+    def route_evaluer_cible(
+        corps: dict[str, Any] | None = None,
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+        entete_utilisateur: Annotated[str | None, Header(alias="X-SEAMTECH-UTILISATEUR")] = None,
+        entete_role: Annotated[str | None, Header(alias="X-SEAMTECH-ROLE")] = None,
+        entete_session: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION")] = None,
+        entete_jeton: Annotated[str | None, Header(alias="X-SEAMTECH-SESSION-JETON")] = None,
+    ) -> dict[str, Any]:
+        """Évalue une CIBLE — une voile à fabriquer — contre l'archive.
+
+        Lecture seule : rien n'est persisté, aucune décision n'est prise, donc
+        aucun acquittement d'approbateur n'est demandé (contrairement à
+        ``/evaluer``, qui engage et s'audit). Une session nominative suffit.
+
+        La différence avec ``/evaluer`` est la question posée : ici on ne juge
+        pas une extraction existante, on demande « pour cette voile que je m'
+        apprête à faire, que dit l'archive ? ». Les écarts mesurés sont
+        renvoyés dès une seule fiche de référence ; le score statistique, lui,
+        reste soumis aux cinq échantillons et le nombre manquant est écrit.
+        """
+        verifier_auth(config, token)
+        _exiger_postgres(index)
+        _acteur(token, entete_utilisateur, entete_role, entete_session, entete_jeton)
+        donnees = corps or {}
+        brut_modele = donnees.get("boat_model_id")
+        try:
+            id_modele = int(brut_modele)
+        except (TypeError, ValueError) as erreur:
+            raise HTTPException(
+                status_code=422,
+                detail=f"« boat_model_id » doit être un entier (reçu : {brut_modele!r}).",
+            ) from erreur
+        if id_modele < 1:
+            raise HTTPException(status_code=422, detail="« boat_model_id » doit être un entier positif.")
+
+        champs: dict[str, Any] = {
+            "boat_model_id": id_modele,
+            "type_voile": donnees.get("type_voile"),
+            "gamme": donnees.get("gamme"),
+            "modele_bateau_brut": donnees.get("modele_bateau_brut"),
+        }
+        for nom in DIMENSIONS_CIBLE:
+            if donnees.get(nom) is not None:
+                champs[nom] = donnees[nom]
+        try:
+            cible = ExtractionVoile(**champs)
+        except ValidationError as erreur:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Cible invalide : {erreur.errors()[0].get('msg', 'valeur refusée') if erreur.errors() else 'valeur refusée'}.",
+            ) from erreur
+        try:
+            return evaluer_cible_population(index, cible, gamme=donnees.get("gamme"))
+        except ConfianceRefusee as erreur:
+            raise HTTPException(status_code=422, detail=str(erreur)) from erreur
 
     @app.get("/confiance-reutilisation/evaluations")
     def route_evaluations_confiance(

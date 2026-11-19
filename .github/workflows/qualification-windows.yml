@@ -219,6 +219,7 @@ jobs:
           }
           exit 0
       - name: Suite sans service sur Windows — verdict
+        id: verdict_sans_service
         if: always()
         # Le verdict est prononcé par ``ci/verdict-windows.ps1`` : causes
         # regroupées par famille, inventaire par paquets (GitHub n'affiche que
@@ -226,47 +227,120 @@ jobs:
         # puis comparaison avec ``ci/ecarts-windows.txt``. Un écart non nommé
         # fait échouer le job : un test écarté doit être écrit quelque part
         # avec sa raison, jamais oublié.
+        #
+        # PLAFOND DE 50 ANNOTATIONS PAR JOB — la raison d'être de ce
+        # conditionnement. GitHub plafonne les annotations à 50 par JOB, et
+        # non par étape (dix par étape, d'où les tranches, mais cinquante
+        # pour le job entier). Mesuré au run 43028968087 : 49 annotations
+        # publiées, TOUS les préfixes « windows-sans-service » — et zéro
+        # « windows-postgres-redis ». L'étape 21 s'exécute APRÈS les cinq
+        # tranches de diagnostic de la première suite ; son diagnostic était
+        # donc ÉVINCÉ, pas absent. Le rouge arrivait sans sa preuve.
+        #
+        # D'où le conditionnement ci-dessous : les tranches de diagnostic ne
+        # servent qu'à instruire un verdict en échec. Quand tout est nommé,
+        # elles consomment le budget pour rien et privent l'autre suite de sa
+        # preuve. Le verdict publie donc son code, et les tranches ne
+        # s'exécutent que sur ce code.
         run: |
           $ErrorActionPreference = 'Continue'
           pwsh -File ci\verdict-windows.ps1 `
             -Journal logs\windows-sans-service.log `
             -CodeSortie logs\rc-sans-service.txt `
             -Titre windows-sans-service -Causes logs\causes-sans-service.txt -FichierDetails logs\details-sans-service.txt
+          # Le verdict échoue (exit 1) quand un écart n'est PAS nommé dans
+          # ci/ecarts-windows.txt ; il réussit quand tout est nommé. C'est ce
+          # seul fait qui commande les étapes de diagnostic ci-dessous, via
+          # ``steps.<id>.outcome`` — tenu par GitHub, donc incapable de
+          # mentir. Voir le commentaire sur le plafond de 50 annotations.
           exit $LASTEXITCODE
       # Une seule étape ne peut publier que dix familles de causes. Les
       # étapes suivantes ne prononcent PAS de verdict (``exit 0``) : elles ne
       # font que publier les tranches 2 à 5 du même diagnostic, pour que les
       # causes restent lisibles même quand l'inventaire est long.
       - name: Suite sans service — mise au point de l'appariement (ne prononce pas de verdict)
-        if: always()
+        # Voir le commentaire « plafond de 50 annotations » sur l'étape de
+        # verdict : ces tranches ne publient que si ce verdict a échoué.
+        if: always() && steps.verdict_sans_service.outcome == 'failure'
         continue-on-error: true
         run: |
           pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -FichierDetails logs\details-sans-service.txt -DebugAppariement
           exit 0
       - name: Suite sans service — causes, tranche 2
-        if: always()
+        # Voir le commentaire « plafond de 50 annotations » sur l'étape de
+        # verdict : ces tranches ne publient que si ce verdict a échoué.
+        if: always() && steps.verdict_sans_service.outcome == 'failure'
         continue-on-error: true
         run: |
           pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -FichierDetails logs\details-sans-service.txt -Tranche 2
           exit 0
       - name: Suite sans service — causes, tranche 3
-        if: always()
+        # Voir le commentaire « plafond de 50 annotations » sur l'étape de
+        # verdict : ces tranches ne publient que si ce verdict a échoué.
+        if: always() && steps.verdict_sans_service.outcome == 'failure'
         continue-on-error: true
         run: |
           pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -FichierDetails logs\details-sans-service.txt -Tranche 3
           exit 0
       - name: Suite sans service — causes, tranche 4
-        if: always()
+        # Voir le commentaire « plafond de 50 annotations » sur l'étape de
+        # verdict : ces tranches ne publient que si ce verdict a échoué.
+        if: always() && steps.verdict_sans_service.outcome == 'failure'
         continue-on-error: true
         run: |
           pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -FichierDetails logs\details-sans-service.txt -Tranche 4
           exit 0
       - name: Suite sans service — causes, tranche 5
-        if: always()
+        # Voir le commentaire « plafond de 50 annotations » sur l'étape de
+        # verdict : ces tranches ne publient que si ce verdict a échoué.
+        if: always() && steps.verdict_sans_service.outcome == 'failure'
         continue-on-error: true
         run: |
           pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-sans-service.log -CodeSortie logs\rc-sans-service.txt -Titre windows-sans-service -Causes logs\causes-sans-service.txt -FichierDetails logs\details-sans-service.txt -Tranche 5
           exit 0
+  # Lot 17 — le job Windows est SÉPARÉ EN DEUX.
+  #
+  # GitHub plafonne à 50 annotations par job. Le job unique les épuisait
+  # avec la seule suite « sans service » : au run 43115725235, aucune
+  # annotation de la suite PostgreSQL n'a paru, alors qu'elle avait tourné.
+  # On ne pouvait donc ni lire ses échecs, ni les nommer, ni les corriger —
+  # et pire : leur absence ressemblait à un succès.
+  #
+  # Deux jobs, deux budgets. Le job « windows » garde la suite sans service ;
+  # celui-ci porte PostgreSQL et Redis.
+  windows-postgres:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      # Pas de ``SEAMTECH_TEST_DATABASE_URL`` au niveau du job : la suite sans
+      # service doit d'abord passer SANS PostgreSQL. Elle est posée sur la
+      # seule étape qui en a besoin.
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      # La suite sans service MEURT par moments sans laisser de code de sortie
+      # (runs 41365859490, 41375766036, 41420706781) : le processus Python
+      # disparaît. Sans faulthandler, une mort native ne laisse aucune trace
+      # exploitable — seulement l'absence de résumé. Avec lui, la pile Python
+      # est écrite sur la sortie d'erreur, donc dans le journal, donc lisible
+      # dans la queue que publie le verdict.
+      PYTHONFAULTHANDLER: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Dépendances Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Identité du banc Windows
+        run: |
+          $info = Get-ComputerInfo
+          python -V
+          python -c "import platform,sys; print(platform.platform()); print(sys.getfilesystemencoding())"
+          Write-Host "::notice title=windows-identite::os=$($info.OsName) version=$($info.OsVersion)"
       - name: Installer PostgreSQL 16 (hôte)
         if: always()
         # Les services de conteneurs de GitHub ne fonctionnent pas sur les
@@ -426,6 +500,7 @@ jobs:
           }
           exit 0
       - name: Suite PostgreSQL + Redis sur Windows — verdict
+        id: verdict_postgres_redis
         if: always()
         run: |
           $ErrorActionPreference = 'Continue'
@@ -435,13 +510,13 @@ jobs:
             -Titre windows-postgres-redis -Causes logs\causes-postgres-redis.txt -FichierDetails logs\details-postgres-redis.txt
           exit $LASTEXITCODE
       - name: Suite PostgreSQL + Redis — causes, tranche 2
-        if: always()
+        if: always() && steps.verdict_postgres_redis.outcome == 'failure'
         continue-on-error: true
         run: |
           pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-postgres-redis.log -CodeSortie logs\rc-postgres-redis.txt -Titre windows-postgres-redis -Causes logs\causes-postgres-redis.txt -FichierDetails logs\details-postgres-redis.txt -Tranche 2
           exit 0
       - name: Suite PostgreSQL + Redis — causes, tranche 3
-        if: always()
+        if: always() && steps.verdict_postgres_redis.outcome == 'failure'
         continue-on-error: true
         run: |
           pwsh -File ci\verdict-windows.ps1 -Journal logs\windows-postgres-redis.log -CodeSortie logs\rc-postgres-redis.txt -Titre windows-postgres-redis -Causes logs\causes-postgres-redis.txt -FichierDetails logs\details-postgres-redis.txt -Tranche 3
@@ -479,8 +554,25 @@ jobs:
             $rc = $LASTEXITCODE
             Get-Content "logs\diag-$nom.log" -Tail 15 | ForEach-Object { Write-Host "journal: $_" }
             Publier "diag-$nom" "rc=$rc"
+
+            # L'inventaire détaillé des échecs de chaque fichier est publié par
+            # le job ``diagnostic-processus``, qui dispose de son PROPRE budget
+            # d'annotations. Ici il serait évincé : mesuré au run 43400923966,
+            # les notices « diag-*-echecs-N » sont revenues VIDES, le plafond
+            # de 50 annotations par JOB ayant été atteint avant elles. Un
+            # diagnostic qui paraît vide est pire qu'un diagnostic absent : on
+            # le croit fait.
           }
           Publier "diag-fin" "tous les fichiers a processus ont ete executes"
+          # Un diagnostic NE PRONONCE PAS DE VERDICT. Sans ce « exit 0 »,
+          # GitHub ajoute « exit $LASTEXITCODE » à toute étape pwsh : le code
+          # du DERNIER pytest (rc=1 — ces fichiers échouent sur Windows, c'est
+          # attendu et NOMMÉ dans ci/ecarts-windows.txt) devenait celui de
+          # l'étape, et l'étape passait au rouge. Mesuré au run 43400181143 :
+          # le verdict de la suite était VERT, cette étape seule était rouge.
+          # Un outil de diagnostic qui colore le verdict est pire qu'inutile :
+          # il fait croire à une régression qui n'existe pas.
+          exit 0
       - name: Diagnostic ciblé — les échecs encore non élucidés
         if: always()
         # Trois échecs ne sont attribuables à aucune limite de plateforme
@@ -512,12 +604,25 @@ jobs:
           # cause ou si le test suppose POSIX. Les trois cibles précédentes
           # (rejeu ×2, verrou de mutation) sont sorties de la liste : leur cause
           # est connue et corrigée.
+          #
+          # « test_sha_snapshot_propage_aux_copies_locale_et_objet_pg » est
+          # SORTI de cette liste au Lot 19 : sa cause est attribuée (« Lecture
+          # confinée du bundle indisponible sur cette plateforme » — Windows
+          # n'a ni dir_fd, ni O_NOFOLLOW, ni O_DIRECTORY, et ce chemin n'a pas
+          # de repli), démontrée sans Windows par
+          # `tests/test_plateforme_sans_dir_fd.py`
+          # ::test_copie_des_fichiers_locaux_refusee_sans_dir_fd (+ son
+          # contrôle). Il a été gardé UN cycle, est passé de rc=1 à rc=0 avec
+          # « 2 skipped » et un motif nommé sur le runner réel (run
+          # 43262813400) — l'attribution tient — puis retiré comme annoncé.
+          # Corollaire à ne pas perdre : la sauvegarde des pièces jointes
+          # LOCALES reste indisponible sur Windows. Ce n'est pas un test qui
+          # échoue, c'est une fonctionnalité absente.
           $cibles = @(
             "tests/test_liaison_catalogue_capture_pg.py::test_declencheur_invalide_meme_les_reecritures_identiques_pg",
             "tests/test_rebuild_index_postgres.py::test_cli_rebuild_aboutit_sur_une_base_postgres_peuplee",
             "tests/test_sauvegarde_restauration.py::test_cli_sans_s3_aller_retour",
             "tests/test_restauration_dump_stable_pg.py::test_absence_pg_restore_nouvre_pas_de_base_pg_reelle",
-            "tests/test_sauvegarde_snapshot_pg.py::test_sha_snapshot_propage_aux_copies_locale_et_objet_pg",
             "tests/test_race_captures_catalogue.py::test_course_deux_captures_postgres"
           )
           $n = 0
@@ -556,4 +661,184 @@ jobs:
         with:
           name: preuves-qualification-windows
           path: logs/*.log
+          if-no-files-found: warn
+
+
+  # Lot 16 : un job DÉDIÉ, donc un budget d'annotations DÉDIÉ.
+  #
+  # GitHub plafonne à 50 annotations par job. Le job « windows » les épuise
+  # avant même d'atteindre la suite PostgreSQL : au run 43109101484, les 50
+  # créneaux étaient consommés par la suite « sans service », et plus AUCUNE
+  # annotation de la suite PostgreSQL n'a paru. Conséquence grave : l'absence
+  # d'un test dans les causes publiées ne prouve pas qu'il passe — elle peut
+  # seulement dire qu'il n'a pas eu de créneau. Un diagnostic qui se lit par
+  # silence n'est pas un diagnostic.
+  #
+  # Un job séparé dispose de ses propres 50 annotations. Six traces au plus y
+  # sont publiées : la place ne peut pas manquer.
+
+  trace-coordonnee:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      SEAMTECH_TEST_DATABASE_URL: postgresql://seamtech:seamtech_test_password@127.0.0.1:5432/seamtech_search_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Installer PostgreSQL 16 (hôte)
+        if: always()
+        # Les services de conteneurs de GitHub ne fonctionnent pas sur les
+        # runners Windows : PostgreSQL est installé sur l'hôte.
+        run: |
+          choco install postgresql16 --params '/Password:seamtech_test_password' --no-progress -y
+      - name: Démarrer PostgreSQL 16 et créer la base
+        if: always()
+        run: |
+          $pg = Get-Service -Name "postgresql*" | Select-Object -First 1
+          if (-not $pg) { Write-Error "service PostgreSQL introuvable" ; exit 1 }
+          Start-Service $pg.Name
+          $env:PGPASSWORD = "seamtech_test_password"
+          $psql = "C:\Program Files\PostgreSQL\16\bin\psql.exe"
+          for ($i = 0; $i -lt 30; $i++) {
+            try { & $psql -U postgres -c "SELECT version();" | Out-Null; break } catch { Start-Sleep -Seconds 2 }
+          }
+          & $psql -U postgres -c "CREATE ROLE seamtech LOGIN PASSWORD 'seamtech_test_password' SUPERUSER;"
+          & $psql -U postgres -c "CREATE DATABASE seamtech_search_test OWNER seamtech;"
+          & $psql -U postgres -c "SELECT version();"
+          # pg_dump / pg_restore NE SONT PAS dans le PATH après l'installation
+          # Chocolatey. Sans eux, la moitié de la suite sauvegarde échoue en
+          # « binaire « pg_dump » introuvable (PATH, SEAMTECH_PG_BINDIR) » —
+          # cause n° 4 des échecs Windows au run 41427629667, et la plus
+          # facile à lever : c'est le banc qui manquait, pas le produit.
+          # GITHUB_ENV les rend disponibles pour toutes les étapes suivantes.
+          $bindir = "C:\\Program Files\\PostgreSQL\\16\\bin"
+          if (-not (Test-Path (Join-Path $bindir "pg_dump.exe"))) {
+            Write-Host "::error title=pg-outils::pg_dump.exe introuvable dans $bindir"
+            exit 1
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "SEAMTECH_PG_BINDIR=$bindir"
+          Add-Content -Path $env:GITHUB_ENV -Value "PATH=$bindir;$env:PATH"
+          & (Join-Path $bindir "pg_dump.exe") --version
+      - name: Installer pgvector (port Windows, version épinglée)
+        if: always()
+        # Sans pgvector, la migration 006 échoue (« extension "vector" is not
+        # available ») et 479 tests partent en erreur — vu au run 41365859490.
+        # pgvector n'a PAS de binaire Windows officiel : on utilise donc un
+        # port reconstruit, épinglé en version, comme pour Redis 7. Le
+        # déploiement réel devra faire pareil — c'est une exigence
+        # d'installation, pas un détail de CI.
+        run: |
+          $version = "0.8.7"
+          $assets = "https://github.com/czkwg8/pgvector-windows-binary/releases/download/v$version/pgvector-v$version-pg16-windows-x64.zip"
+          $zip = Join-Path $env:TEMP "pgvector-$version.zip"
+          $extrait = "C:\pgvector16"
+          $pg = "C:\Program Files\PostgreSQL\16"
+          New-Item -ItemType Directory -Force -Path $extrait | Out-Null
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Invoke-WebRequest -Uri $assets -OutFile $zip -UseBasicParsing -ErrorAction Stop
+          Expand-Archive -Path $zip -DestinationPath $extrait -Force
+          foreach ($motif in @("vector.dll", "vector.control", "vector--*.sql")) {
+            $cible = if ($motif -eq "vector.dll") { Join-Path $pg "lib" } else { Join-Path $pg "share\extension" }
+            $trouves = Get-ChildItem $extrait -Recurse -Filter $motif -ErrorAction SilentlyContinue
+            if (-not $trouves) { Write-Host "::error title=pgvector-install::$motif introuvable dans l'archive" ; exit 1 }
+            foreach ($fichier in $trouves) { Copy-Item $fichier.FullName -Destination $cible -Force }
+          }
+          $env:PGPASSWORD = "seamtech_test_password"
+          $psql = Join-Path $pg "bin\psql.exe"
+          & $psql -U postgres -d seamtech_search_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          $version_posee = & $psql -U postgres -d seamtech_search_test -tAc "SELECT extversion FROM pg_extension WHERE extname='vector';"
+          if (-not $version_posee) { Write-Host "::error title=pgvector-install::extension vector absente apres installation" ; exit 1 }
+          Write-Host "::notice title=pgvector-install::version=$version_posee (port Windows, pg16 x64)"
+      - name: Traces complètes des échecs armés
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          python ci\publier_traces.py
+          exit 0
+
+  # ---------------------------------------------------------------------------
+  # Un job à part, et pour une raison précise : GitHub plafonne les annotations
+  # à 50 par JOB. Le diagnostic ci-dessus, publié depuis ``windows-postgres``,
+  # arrivait après les tranches de ce job et repartait VIDE (run 43400923966).
+  # Un job séparé a son propre budget : vingt notices au plus y tiennent.
+  #
+  # Deuxième correction, au passage : GitHub tronque un message d'annotation au
+  # premier saut de ligne. D'où les « -echecs-N » vides. L'inventaire est donc
+  # publié sur UNE SEULE ligne, les entrées séparées par « ; ».
+  # ---------------------------------------------------------------------------
+  diagnostic-processus:
+    name: Diagnostic processus Windows
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Fichiers à processus POSIX, un par un — inventaire nommé
+        run: |
+          $ErrorActionPreference = 'Continue'
+          function Publier([string]$titre, [string]$texte) {
+            if ($null -eq $texte) { $texte = '' }
+            $propre = $texte -replace '%', '%25' -replace "`r", '' -replace "`n", ' ; '
+            $i = 0
+            while ($propre.Length -gt 0) {
+              $i++
+              $morceau = $propre.Substring(0, [Math]::Min(1400, $propre.Length))
+              # Le titre est assemblé AVANT l'appel, jamais composé à
+              # l'intérieur de la chaîne : c'est la seule forme du workflow
+              # qui casse le parseur PowerShell, et elle a mis la CI au rouge
+              # (runs 43406891186 / 43406883886). « :: » est l'opérateur d'accès
+              # statique ; le précéder de « $var-$var » le rend ambigu pour
+              # [Parser]::ParseFile. Toutes les autres étapes du dépôt
+              # écrivent « title=$titre::$propre » — une variable nue, un
+              # point-virgule double, rien entre les deux. On s'y tient.
+              $complet = $titre + "-" + $i
+              Write-Host "::notice title=$complet::$morceau"
+              if ($propre.Length -le 1400) { break }
+              $propre = $propre.Substring(1400)
+            }
+          }
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          foreach ($fichier in @(
+              "tests/test_restauration_confinement.py",
+              "tests/test_televersement_creation_idempotente.py",
+              "tests/test_relais_file_base.py",
+              "tests/test_lot10_televersement_lot.py",
+              "tests/test_extraction_logs_securite.py")) {
+            $nom = [IO.Path]::GetFileNameWithoutExtension($fichier)
+            python -m pytest -q -rf $fichier > "logs\proc-$nom.log" 2>&1
+            $rc = $LASTEXITCODE
+            $echecs = @(Select-String -Path "logs\proc-$nom.log" -Pattern '^(FAILED|ERROR) ' |
+                        ForEach-Object { ($_.Line.Trim() -replace '\s+', ' ') })
+            if ($echecs.Count -eq 0) {
+              if ($rc -eq 0) {
+                Publier "proc-$nom" "rc=0 ; VERT sur Windows : aucune epreuve en echec"
+              } else {
+                Publier "proc-$nom" "rc=$rc ; rouge mais aucune ligne FAILED/ERROR (erreur de collection ?) ; voir l'artefact"
+              }
+            } else {
+              Publier "proc-$nom" ("rc=$rc ; $($echecs.Count) echec(s) : " + ($echecs -join ' ; '))
+            }
+          }
+          # Même motif : étape de diagnostic, elle ne prononce aucun verdict.
+          exit 0
+      - name: Conserver les journaux du diagnostic processus
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostic-processus-windows
+          path: logs/proc-*.log
           if-no-files-found: warn

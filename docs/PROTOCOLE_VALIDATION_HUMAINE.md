@@ -7,8 +7,11 @@ rédigé avant l'arrivée des données et ne contient **aucune fiche réelle**.
 
 **Principes (non négociables)** :
 
-- la machine propose, l'humain dispose — aucune valeur n'est « validée »
-  par le logiciel (RG3) ;
+- la machine propose ; depuis la décision du commanditaire du 2026-11-14,
+  elle VALIDE AUSSI au-dessus d'un seuil : un score d'extraction strictement
+  supérieur à 90 % et aucune anomalie bloquante ⇒ la fiche arrive `valide`
+  sans approbateur (règle qui REMPLACE RG3, `seamtech_search/fiches/auto_validation.py`).
+  L'humain dispose de tout le reste, et de la possibilité de rouvrir ;
 - toute valeur extraite est tracée : méthode, confiance, page, zone PDF
   (`seamtech_search/fiches/modeles.py` — `ChampExtrait`, `Zone`) ;
 - aucune donnée client ne circule hors des outils prévus ; les modèles

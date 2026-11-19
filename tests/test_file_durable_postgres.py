@@ -41,7 +41,7 @@ from tests.helpers_postgres_isole import url_base_jetable
 RACINE = Path(__file__).resolve().parents[1]
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 URL_REDIS = os.environ.get("SEAMTECH_TEST_REDIS_URL", "")
-FICHE_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+FICHE_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 FICHE_GENOIS = RACINE / "sample_data/CLIENT-GENOA/fiche-genois.pdf"
 
 pytestmark = [pytest.mark.redis_queue, pytest.mark.postgres]
@@ -126,7 +126,7 @@ def _archive_lot(tmp_path: Path) -> Path:
     """
     racine = tmp_path / "archive_lot"
     racine.mkdir(parents=True, exist_ok=True)
-    contenus = {1: FICHE_7792, 2: FICHE_GENOIS, 3: FICHE_GENOIS}
+    contenus = {1: FICHE_REFERENCE, 2: FICHE_GENOIS, 3: FICHE_GENOIS}
     for numero, source in contenus.items():
         dossier = racine / f"AFFAIRE-{numero:04d}"
         dossier.mkdir()
@@ -158,6 +158,14 @@ def _dossiers_traites(index: SearchIndex, id_lot: int) -> int:
 # AUSSI, sinon la porte de couverture de ``seamtech_search/jobs.py`` (94 %)
 # tombe et, plus grave, la supervision de jobs n'est éprouvée sur aucune base
 # réelle.
+
+
+def _compter_lignes_dossiers(index: Any, id_lot: int) -> int:
+    """Nombre de lignes ``lot_dossier`` : une redélivrance n'en ajoute aucune."""
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM lot_dossier WHERE id_lot = %s", (id_lot,))
+            return int(cursor.fetchone()[0])
 
 
 def test_supervision_des_jobs_sur_postgresql(base_durable: dict[str, Any], tmp_path: Path) -> None:
@@ -332,6 +340,23 @@ def test_lot_interrompu_reprend_sans_refaire_les_dossiers_traites(
     Mesuré : (1) le lot n'est pas « terminé » après l'interruption, il est
     « interrompu » avec des dossiers restants ; (2) la reprise traite les
     dossiers restants ; (3) aucune fiche n'est créée deux fois.
+
+    CONSÉQUENCE DIRECTE DE L'AUTO-VALIDATION, assumée ici et non masquée :
+    l'archive contient volontairement DEUX dossiers pour la même affaire
+    (cas réel d'un remplacement). Le premier dépose la fiche, qui est
+    auto-validée (score 0,98). Le second, de même code, trouve donc une
+    fiche « valide » et RG11 refuse de l'écraser — il part en échec avec
+    une raison EXPLICITE au lieu de passer inaperçu.
+
+    Avant la règle, la fiche attendait en « a_valider » et le second
+    dossier la remplaçait sur place : le remplacement silencieux
+    fonctionnait. Il exige désormais une réouverture (`rouvrir`), ce qui
+    est exactement le sort déjà réservé à une fiche validée par un humain.
+
+    Ce que le test exige donc, ce n'est pas « 3 dossiers traités », mais
+    que rien ne se perde en silence : le lot se termine, aucun dossier ne
+    reste en attente, aucune fiche n'est dupliquée, et le refus porte la
+    raison RG11 qui dit quoi faire.
     """
     from seamtech_search.fiches import depot
 
@@ -363,12 +388,37 @@ def test_lot_interrompu_reprend_sans_refaire_les_dossiers_traites(
     resultat = process_import_task(
         charge, config, index, magasin, worker_id="worker-reprise", heartbeat=lambda: None
     )
+    if resultat.get("status") == "stale_worker":
+        # Un échec doit NOMMER sa cause (philosophie du dépôt). Sans ces
+        # lignes, « stale_worker » ne dit pas si le claim perdu est celui de
+        # Redis ou celui du registre de jobs — on devinerait, ce qui est
+        # interdit. Le diagnostic est donc versé dans l'échec lui-même.
+        from seamtech_search.jobs import get_job
+
+        job = get_job(index, f"lot-{id_lot}")
+        dire_redis = magasin.revendication_appartient_a("imports", f"lot-{id_lot}", "worker-reprise")
+        raise AssertionError(
+            f"claim perdu avant traitement : job={job} ; revendication_redis={dire_redis}"
+        )
     assert resultat["status"] in {"completed", "needs_review"}, resultat
 
     etat_final = depot.etat_lot(index, id_lot)
     assert etat_final["statut"] == "termine"
     assert not etat_final["restants"], "tous les dossiers doivent être traités après reprise"
-    assert _dossiers_traites(index, id_lot) == 3, "les 3 dossiers doivent être marqués traités"
+    # 2 dossiers traités + 1 refusé par RG11 (voir le docstring) : ce qui
+    # compte est que le refus soit NOMMÉ, pas qu'il n'existe pas.
+    assert _dossiers_traites(index, id_lot) == 2, "2 dossiers traités + 1 refusé par RG11"
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT raison FROM lot_dossier WHERE id_lot = %s AND statut = 'echec'", (id_lot,)
+            )
+            raisons = [str(ligne[0]) for ligne in cursor.fetchall()]
+    assert len(raisons) == 1, f"un seul dossier doit échouer, raisons : {raisons}"
+    assert "RG11" in raisons[0], f"le refus doit nommer sa cause (RG11), lu : {raisons[0]!r}"
+    assert "rouvrir" in raisons[0].lower() or "validée" in raisons[0].lower(), (
+        f"le refus doit dire quoi faire, lu : {raisons[0]!r}"
+    )
     fiches_finales = _compter_fiches(index)
     # 3 dossiers, 2 contenus distincts ⇒ 2 fiches : la reprise a déposé les
     # dossiers 2 et 3 (contenu identique au dossier 2 ⇒ même fiche, pas de
@@ -379,12 +429,34 @@ def test_lot_interrompu_reprend_sans_refaire_les_dossiers_traites(
     )
 
     # --- Livraison dupliquée : le même lot est redélivré par Redis ---------
+    # Le lot est TERMINÉ (ici « needs_review », un dossier étant refusé par
+    # RG11). Sa redélivrance doit être reconnue comme un doublon et acquittée,
+    # jamais retraitée. Avant la règle générale, elle repartait dans
+    # _process_lot_task, qui ne peut plus revendiquer un job terminal : elle
+    # rendait « stale_worker », que worker_loop n'acquitte ni ne reprogramme —
+    # le message restait revendiqué jusqu'à l'expiration du TTL, puis était
+    # remis en file, et ainsi de suite.
+    nb_lignes_dossiers = _compter_lignes_dossiers(index, id_lot)
     assert magasin.enqueue_task("imports", charge)
     rejoue = process_import_task(
         charge, config, index, magasin, worker_id="worker-reprise", heartbeat=lambda: None
     )
+    assert rejoue.get("status") != "stale_worker", rejoue
     assert rejoue.get("duplicate_delivery") is True, rejoue
+    # Même état qu'au premier passage : RIEN n'a été refait.
+    assert rejoue.get("result") == resultat.get("etat"), (
+        f"la redélivrance doit rendre l'état du premier passage, pas le recalculer "
+        f"(relu={rejoue.get('result')!r})"
+    )
+    assert rejoue.get("status") == "needs_review", rejoue
+    # Acquittable, donc pas remis en file : worker_loop acquitte (ack_task)
+    # tout statut qui n'est ni un échec à rejouer ni « stale_worker ». C'est
+    # exactement ce contrat que la ligne ci-dessous verrouille.
+    assert rejoue["status"] not in {"failed", "upload_incomplete", "stale_worker"}
     assert _compter_fiches(index) == fiches_finales, "une redélivrance ne doit créer aucune fiche"
+    assert _compter_lignes_dossiers(index, id_lot) == nb_lignes_dossiers, (
+        "une redélivrance ne doit créer aucune ligne de dossier"
+    )
 
 
 # ---------------------------------------------------------------------------

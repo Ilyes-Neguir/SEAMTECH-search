@@ -4,7 +4,7 @@ import { APPROBATEUR, LECTURE, UTILISATEUR, csrfHeadersForPage, signInWith } fro
 /**
  * Lot 3b — l'écran approbateur des extractions de voiles, éprouvé dans le
  * navigateur contre PostgreSQL réel (base live semée par seed-live-pg.py :
- * les dépôts 7792-SO / GENOA / E2E-TROIS ont produit de vraies lignes
+ * les dépôts 1042-EX / GENOA / E2E-TROIS ont produit de vraies lignes
  * `sail_extractions` via les Lots 3a/3b).
  *
  * Le parcours prouvé : file → détail côte à côte (PDF réel) → correction du
@@ -15,7 +15,7 @@ import { APPROBATEUR, LECTURE, UTILISATEUR, csrfHeadersForPage, signInWith } fro
  * tests/test_lot3b_liaison_voile.py.
  */
 
-const CODE_REFERENCE = "7792-SO"
+const CODE_REFERENCE = "1042-EX"
 const LIBELLE_TEST = `Bateau Démo Lot3b ${Date.now()}`
 const MODELE_TEST = `Modèle Démo Lot3b ${Date.now()}`
 
@@ -75,9 +75,15 @@ test.describe("Lot 3b — extractions de voiles", () => {
     await page.getByTestId("bouton-resoudre-lot").click()
     await expect(page.getByTestId("message-extraction")).toContainText("Résolution en lot", { timeout: 30000 })
 
-    // La fiche de référence 7792-SO a une extraction réelle avec son PDF.
+    // La fiche de référence 1042-EX a une extraction réelle avec son PDF.
+    const items = file.getByTestId("extraction-item")
     await page.getByTestId("recherche-extractions").fill(CODE_REFERENCE)
-    const ligne = file.getByTestId("extraction-item").first()
+    // Même piège que dans lot6-parcours-3clics : la saisie déclenche un
+    // aller-retour serveur, donc lire `.first()` sans attendre relisait la
+    // file encore non filtrée. On attend que la file ait convergé vers le
+    // résultat du filtre (une seule ligne) avant de cliquer.
+    await expect(items).toHaveCount(1, { timeout: 30000 })
+    const ligne = items.first()
     await expect(ligne).toContainText(CODE_REFERENCE, { timeout: 30000 })
     await ligne.click()
 
@@ -136,7 +142,7 @@ test.describe("Lot 3b — extractions de voiles", () => {
     // ---------------------------------------------------------------------
     // REMISE EN ÉTAT (isolation des specs) — défaut d'ordre corrigé le 28/10.
     //
-    // Ce test RENOMME le libellé de modèle de la fiche de référence 7792-SO
+    // Ce test RENOMME le libellé de modèle de la fiche de référence 1042-EX
     // puis la lie à un modèle de démonstration. Sans remise en état, la
     // population de référence du Lot 5 (5 voiles du modèle « 29er ») ne
     // contient plus la candidate : `lot5-confiance` échouait alors qu'il passe

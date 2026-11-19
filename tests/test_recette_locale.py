@@ -175,12 +175,21 @@ def test_recette_etend_les_20_controles_existants_a_27_sans_regression() -> None
     assert len(CONTROLES_VERIF) + len(CONTROLES_WRAPPER) == 27
 
 
-def test_recette_epingle_les_sept_pdf_sources_et_gib_sea() -> None:
-    """Les 7 PDF principaux sont comparés par SHA-256; GIB SEA est requis."""
+def test_recette_epingle_les_sept_pdf_sources() -> None:
+    """Les 7 PDF principaux sont comparés par SHA-256, et les 7 sont requis.
+
+    Les noms sont désormais neutres (CORPUS-01..07) : les archives ont été
+    purgées, et leur nom portait le bateau et le code de chantier du client.
+    On exige donc la présence des SEPT références, et non plus celle d'un
+    dossier nommé — c'est la même exigence, sans la fuite.
+    """
     import scripts.recette_verif as recette
 
     assert len(recette.PDFS_SEPT_FICHES) == 7
-    assert any("GIBSEA 284 250328 AJA.pdf" in nom for nom in recette.PDFS_SEPT_FICHES)
+    for rang in range(1, 8):
+        assert f"CORPUS-{rang:02d}.pdf" in recette.PDFS_SEPT_FICHES, (
+            f"référence CORPUS-{rang:02d}.pdf absente de PDFS_SEPT_FICHES"
+        )
     assert all(len(empreinte) == 64 and all(c in "0123456789abcdef" for c in empreinte) for empreinte in recette.PDFS_SEPT_FICHES.values())
 
 
@@ -551,3 +560,130 @@ def test_recette_ps1_arrete_sur_echec_restauration_sans_poursuivre_down_up() -> 
     idx_finally = texte.find("finally")
     idx_critique = texte.find("ÉCHEC CRITIQUE DE RESTAURATION", idx_finally)
     assert idx_finally < idx_critique, "La garde d'arrêt des écrivains doit être dans le bloc finally"
+
+
+# ---------------------------------------------------------------------------
+# Corpus synthétique de repli — épreuves statiques et fonctionnelles.
+#
+# Les 7 archives du corpus RÉEL ont été purgées du dépôt (elles provenaient du
+# commanditaire). Sans archive, la recette se rabat sur le corpus SYNTHÉTIQUE
+# de sample_data/recette/. Un repli pourri ne se voit qu'au bout de vingt
+# minutes de CI : on le vérifie donc ici, sans Docker.
+# ---------------------------------------------------------------------------
+
+RACINE = Path(__file__).resolve().parents[1]
+CORPUS_SYNTH = RACINE / "sample_data" / "recette"
+GENERATEUR = RACINE / "scripts" / "generer_corpus_recette_synthetique.py"
+
+# La cohorte minimale que réclame la recette (_fiches_a_valider).
+AFFAIRES_MINIMUM = 3
+
+
+def test_corpus_synthetique_de_repli_exploitable() -> None:
+    """Le repli doit offrir assez d'affaires DISTINCTES pour la recette.
+
+    Deux pièges, déjà rencontrés :
+    * des affaires dont le PDF est IDENTIQUE seraient fondues en une seule
+      fiche par la déduplication (SHA-256), et la cohorte s'effondrerait ;
+    * un type de voile hors du vocabulaire du gabarit fait perdre d'un coup
+      code, type de voile, client et bateau — trois fiches « champ
+      obligatoire manquant » au lieu de trois affaires exploitables.
+    """
+    assert CORPUS_SYNTH.is_dir(), f"corpus de repli absent : {CORPUS_SYNTH}"
+    affaires = sorted(p for p in CORPUS_SYNTH.iterdir() if p.is_dir())
+    assert len(affaires) >= AFFAIRES_MINIMUM, (
+        f"{len(affaires)} affaire(s) synthétique(s) dans {CORPUS_SYNTH}, "
+        f"la recette en attend au moins {AFFAIRES_MINIMUM} : la cohorte minimale "
+        f"ne serait jamais atteinte et le job recette-locale tomberait."
+    )
+    empreintes = set()
+    for affaire in affaires:
+        pdfs = sorted(affaire.glob("*.pdf"))
+        assert len(pdfs) == 1, (
+            f"{affaire.name} : {len(pdfs)} PDF, un seul attendu — un dossier qui "
+            f"mélange fiche de fabrication et autres documents n'est pas une "
+            f"affaire exploitable."
+        )
+        empreintes.add(pdfs[0].read_bytes())
+    assert len(empreintes) == len(affaires), (
+        "deux affaires portent un PDF identique : la déduplication par SHA-256 "
+        "les fusionnerait et la cohorte serait plus courte que le nombre "
+        "d'affaires importées."
+    )
+
+
+def test_corpus_synthetique_chaque_affaire_donne_un_code_distinct() -> None:
+    """Chaque affaire du repli doit s'extraire, avec SON code.
+
+    C'est l'épreuve qui aurait attrapé la première version du générateur
+    (type de voile hors vocabulaire) : les PDF étaient bien distincts, mais
+    l'extraction ne rendait plus aucun code.
+    """
+    pytest.importorskip("pdfplumber", reason="pdfplumber requis pour extraire")
+    from seamtech_search.fiches.extraction import extraire_avec_filet
+    from seamtech_search.fiches.gabarits import GABARITS_EMBARQUES
+
+    affaires = sorted(p for p in CORPUS_SYNTH.iterdir() if p.is_dir())
+    codes: dict[str, str] = {}
+    for affaire in affaires:
+        pdf = sorted(affaire.glob("*.pdf"))[0]
+        fiche = extraire_avec_filet(pdf, list(GABARITS_EMBARQUES))
+        assert fiche.code, (
+            f"{pdf.name} : aucun code extrait — le corpus de repli produirait une "
+            f"fiche inexploitable (anomalies={[a.get('code') for a in (fiche.anomalies or [])][:4]})."
+        )
+        codes[affaire.name] = fiche.code
+    assert len(set(codes.values())) == len(affaires), (
+        f"codes extraits non distincts : {codes} — les affaires se confondraient "
+        f"dans la cohorte de la recette."
+    )
+
+
+def test_corpus_synthetique_laisse_une_fiche_en_revue() -> None:
+    """Le repli doit laisser AU MOINS une fiche en attente de revue.
+
+    Le contrôle « filtres-facettes » prouve qu'une fiche EN ATTENTE est
+    exclue de la recherche quand inclure_a_valider=false. Un corpus où les
+    trois fiches partent en auto-validation ne laisse plus rien à exclure :
+    le contrôle n'a plus rien à démontrer et tombe.
+
+    Ce n'est pas un défaut du seuil d'auto-validation (D4) qu'il faudrait
+    contourner — c'est le corpus qui doit reproduire le MÉLANGE d'arrivée du
+    corpus réel : des fiches propres ET des fiches à reprendre. Une affaire
+    porte donc une incohérence de mesures volontaire ; c'est la règle des
+    anomalies bloquantes de D4 qui la classe en revue.
+    """
+    pytest.importorskip("pdfplumber", reason="pdfplumber requis pour extraire")
+    from seamtech_search.fiches.auto_validation import decider_statut_arrivee
+    from seamtech_search.fiches.extraction import extraire_avec_filet
+    from seamtech_search.fiches.gabarits import GABARITS_EMBARQUES
+
+    statuts = {}
+    for affaire in sorted(p for p in CORPUS_SYNTH.iterdir() if p.is_dir()):
+        pdf = sorted(affaire.glob("*.pdf"))[0]
+        fiche = extraire_avec_filet(pdf, list(GABARITS_EMBARQUES))
+        statuts[affaire.name] = decider_statut_arrivee(
+            fiche.score_qualite(), fiche.anomalies or []
+        ).statut
+    assert "a_valider" in statuts.values(), (
+        f"aucune affaire du corpus de repli n'arrive en revue humaine : {statuts}. "
+        f"Sans fiche en attente, le contrôle filtres-facettes de la recette "
+        f"n'a plus rien à exclure et le job recette-locale tombe. Le seuil "
+        f"d'auto-validation ne doit PAS être abaissé pour autant : c'est le "
+        f"corpus qui doit porter une affaire à reprendre."
+    )
+
+
+def test_recette_locale_repli_utilise_le_corpus_dedie() -> None:
+    """Le repli doit viser sample_data/recette/, pas tout sample_data/.
+
+    Les autres jeux de sample_data/ servent à d'autres tests ; un seul porte
+    une vraie fiche de fabrication. Les importer en vrac, c'est revenir au
+    constat d'échec « aucune affaire exploitable ».
+    """
+    texte = (RACINE / "scripts" / "recette_locale.sh").read_text(encoding="utf-8")
+    assert 'sample_data/recette/CLIENT-*' in texte, (
+        "recette_locale.sh : le repli doit copier sample_data/recette/CLIENT-*, "
+        "pas les jeux de sample_data/ au petit bonheur."
+    )
+    assert texte.count("NB_SYNTH") >= 3, "recette_locale.sh : le repli synthétique a disparu"

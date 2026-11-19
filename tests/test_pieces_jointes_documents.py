@@ -19,7 +19,7 @@ from typing import Any, Iterator
 
 import pytest
 
-from seamtech_search.fiches import depot
+from seamtech_search.fiches import auto_validation, depot
 from seamtech_search.fiches.gabarits import initialiser_gabarits
 from seamtech_search.fiches.modeles import FicheExtraite
 from seamtech_search.indexer import SearchIndex
@@ -27,11 +27,36 @@ from seamtech_search.models import Document
 from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parent.parent
-ARCHIVE_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+ARCHIVE_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 
 pytestmark = pytest.mark.postgres  # couche métier PostgreSQL uniquement (§17.1)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def seuil_auto_validation_hors_atteinte() -> Iterator[None]:
+    """Porte le seuil d'auto-validation hors d'atteinte pour TOUT ce module.
+
+    POURQUOI : ce module éprouve un parcours qui part d'une fiche EN
+    ATTENTE humaine (correction, promotion, rejeu, pièces jointes). Depuis
+    l'auto-validation au seuil de 90 % — décision du commanditaire du
+    2026-11-14 — la fiche réelle du corpus score 0,929 et arrive « valide »
+    : RG11 refuse alors correction et re-dépôt, et le module mesurerait ce
+    refus au lieu du parcours qu'il a pour objet.
+
+    Le seuil est porté à 1,0 — inatteignable, la comparaison étant STRICTE
+    — et non contourné par un patch de la fonction : la règle reste celle
+    du produit, seul son réglage change. Portée MODULE et déclarée AVANT
+    la fixture de base : le dépôt a lieu dans cette autre fixture module,
+    un patch de portée fonction s'appliquerait trop tard.
+
+    Ce que ce module ne couvre donc plus est prouvé ailleurs, et
+    explicitement, dans ``tests/test_auto_validation_persistance.py``.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(auto_validation, "SEUIL_AUTO_VALIDATION", 1.0)
+        yield
 
 
 @pytest.fixture(scope="module")
@@ -130,7 +155,7 @@ class TestCatalogueUniquePieceJointe:
         index = base_pieces["index"]
         dossier = tmp_path / "AFFAIRE-PIECE"
         dossier.mkdir()
-        shutil.copy(ARCHIVE_7792, dossier / "fiche.pdf")
+        shutil.copy(ARCHIVE_REFERENCE, dossier / "fiche.pdf")
         (dossier / "plan-atelier-croquis.pdf").write_bytes(b"%PDF-1.4 piece")
         resultat = depot.deposer_dossier(index, dossier)
         assert resultat["statut"] == "traite" and resultat["pieces"] == 1
@@ -159,7 +184,7 @@ class TestCatalogueUniquePieceJointe:
                 )
                 assert cursor.fetchone()[0] == 1, "la pièce jointe n'est pas retrouvable par son nom"
                 cursor.execute(
-                    "SELECT COUNT(*) FROM documents WHERE search_vector @@ plainto_tsquery('seamtech_unaccent', '7792-SO')"
+                    "SELECT COUNT(*) FROM documents WHERE search_vector @@ plainto_tsquery('seamtech_unaccent', '1042-EX')"
                 )
                 assert cursor.fetchone()[0] >= 1, "la pièce n'est pas retrouvable par le code de sa fiche"
 
@@ -168,7 +193,7 @@ class TestCatalogueUniquePieceJointe:
         index = base_pieces["index"]
         dossier = tmp_path / "AFFAIRE-REJEU"
         dossier.mkdir()
-        shutil.copy(ARCHIVE_7792, dossier / "fiche.pdf")
+        shutil.copy(ARCHIVE_REFERENCE, dossier / "fiche.pdf")
         (dossier / "croquis-voile.pdf").write_bytes(b"%PDF-1.4 croquis")
         depot.deposer_dossier(index, dossier)
         depot.deposer_dossier(index, dossier)  # rejeu
@@ -188,8 +213,8 @@ class TestDeuxDossiersMemeFiche:
         dossier_b = tmp_path / "COMMANDE-B"
         dossier_a.mkdir()
         dossier_b.mkdir()
-        shutil.copy(ARCHIVE_7792, dossier_a / "fiche.pdf")
-        shutil.copy(ARCHIVE_7792, dossier_b / "fiche.pdf")  # même fiche, autre dossier
+        shutil.copy(ARCHIVE_REFERENCE, dossier_a / "fiche.pdf")
+        shutil.copy(ARCHIVE_REFERENCE, dossier_b / "fiche.pdf")  # même fiche, autre dossier
         (dossier_a / "croquis-A.pdf").write_bytes(b"%PDF-1.4 A")
         (dossier_b / "photo-B.pdf").write_bytes(b"%PDF-1.4 B")
 
@@ -199,7 +224,7 @@ class TestDeuxDossiersMemeFiche:
 
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
-                cursor.execute("SELECT COUNT(*) FROM fiche WHERE code = %s", ("7792-SO",))
+                cursor.execute("SELECT COUNT(*) FROM fiche WHERE code = %s", ("1042-EX",))
                 assert cursor.fetchone()[0] == 1, "le second dépôt a dupliqué la fiche"
                 # les pièces des DEUX dossiers sont rattachées à la même fiche
                 # (comptage par chemins exacts : la fiche peut porter d'autres
@@ -207,7 +232,7 @@ class TestDeuxDossiersMemeFiche:
                 cursor.execute(
                     "SELECT COUNT(*) FROM fiche_piece_jointe p JOIN fiche f ON f.id_fiche = p.id_fiche "
                     "WHERE f.code = %s AND p.chemin IN (%s, %s)",
-                    ("7792-SO", str(dossier_a / "croquis-A.pdf"), str(dossier_b / "photo-B.pdf")),
+                    ("1042-EX", str(dossier_a / "croquis-A.pdf"), str(dossier_b / "photo-B.pdf")),
                 )
                 assert cursor.fetchone()[0] == 2, "les pièces des deux dossiers doivent être rattachées"
                 # chaque dépôt (chaque ligne lot_dossier) pointe vers la même fiche

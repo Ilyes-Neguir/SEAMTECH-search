@@ -332,7 +332,7 @@ Jobs du run push `37606067205` (tous `success`) : `backend (3.11)`,
 4. **Navigateur réel (Playwright)** → job `e2e` (vert) : annotation
    `e2e-auth-nominatif : 26 tests verts (dont 4 sur les comptes nominatifs)`,
    `e2e-doublons : 2 tests verts`, et la mesure du parcours machine complet de
-   la vraie fiche 7792-SO (`841 ms`).
+   la vraie fiche 1042-EX (`841 ms`).
 5. **Recette locale complète et corpus réel** → jobs `recette-locale` et
    `recette-corpus-reel` (verts), dont le contrôle `pdf-presigne` vérifie
    désormais le RÉSULTAT (SHA-256 du document téléchargé) et refuse toute

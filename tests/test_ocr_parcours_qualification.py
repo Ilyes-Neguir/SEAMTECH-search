@@ -24,7 +24,7 @@ FIXTURES = RACINE / "tests" / "fixtures" / "ocr"
 PDF_PROPRE = FIXTURES / "ocr_propre.pdf"
 PDF_DEGRADE = FIXTURES / "ocr_degrade.pdf"
 REF_PROPRE = FIXTURES / "reference_propre.txt"
-PDF_TEXTE = RACINE / "sample_data" / "CLIENT-7792-SO" / "fiche-7792-SO_ffab.pdf"
+PDF_TEXTE = RACINE / "sample_data" / "CLIENT-1042-EX" / "fiche-1042-EX_ffab.pdf"
 
 
 def _tesseract() -> str:
@@ -104,7 +104,7 @@ def test_pdf_texte_natif_non_ocerise_regression() -> None:
     resultat = extract_file(PDF_TEXTE, max_chars=20_000, enable_ocr=True, tesseract_command=cmd)
     assert hashlib.sha256(PDF_TEXTE.read_bytes()).hexdigest() == avant
     assert resultat.status == "extracted"
-    assert "7792" in resultat.text or len(resultat.text) > 50
+    assert "1042" in resultat.text or len(resultat.text) > 50
 
 
 def test_xlsx_sans_regression_ocr() -> None:
@@ -218,7 +218,7 @@ def test_parcours_import_ocr_index_recherche_telechargement(tmp_path: Path) -> N
         if PDF_TEXTE.is_file():
             extra_texte = extract_file(PDF_TEXTE, max_chars=20_000, enable_ocr=True, tesseract_command=cmd)
             assert extra_texte.status == "extracted"
-            assert "7792" in extra_texte.text or len(extra_texte.text) > 50
+            assert "1042" in extra_texte.text or len(extra_texte.text) > 50
     finally:
         index.close()
         _supprimer_base_jetable(nom)

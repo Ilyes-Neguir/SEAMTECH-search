@@ -3,7 +3,7 @@
 Ce qui est prouvé ici, sans jamais inventer de chiffre :
 
 1. le corpus synthétique est reproductible et le noyau RÉEL (la vraie fiche
-   7792-SO) va à l'évaluation, jamais à l'entraînement ;
+   1042-EX) va à l'évaluation, jamais à l'entraînement ;
 2. le classifieur du type de voile s'entraîne, se mesure CONTRE les règles
    sur le même jeu, se sérialise ET se recharge (prédictions identiques) ;
 3. la source ``vecteurs`` du Lot E s'ACTIVE après peuplement
@@ -41,8 +41,8 @@ from seamtech_search.ml.encodeur import DIMENSION_EMBEDDING, EncodeurDeterminist
 from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parents[1]
-VERITE_7792 = RACINE / "docs/verite_terrain/7792-SO_ffab.json"
-PDF_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+VERITE_REFERENCE = RACINE / "docs/verite_terrain/1042-EX_ffab.json"
+PDF_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 
 pytestmark = pytest.mark.postgres  # tout le volet activation exige PostgreSQL (§17.1)
@@ -64,11 +64,11 @@ class TestCorpusEtRegles:
         assert all(nombre == 20 for nombre in comptes.values())
 
     def test_noyau_reel_jamais_invente(self) -> None:
-        noyau = noyau_reel(VERITE_7792)
+        noyau = noyau_reel(VERITE_REFERENCE)
         assert len(noyau) == 1, "une seule vraie fiche au dépôt aujourd'hui : le noyau réel en compte une"
         assert noyau[0]["etiquette"] == "spi"
         assert noyau[0]["origine"] == "reel"
-        assert "7792-SO" in noyau[0]["texte"], "le texte provient de la vérité terrain, pas d'une invention"
+        assert "1042-EX" in noyau[0]["texte"], "le texte provient de la vérité terrain, pas d'une invention"
 
     def test_regles_et_pieges(self) -> None:
         assert regles_type_voile("Spi asymétrique | Medium Régate") == "spi"
@@ -84,7 +84,7 @@ class TestCorpusEtRegles:
 class TestClassifieurMaison:
     def _jeu(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         entrainement, evaluation = partager(generer_corpus_synthetique(par_classe=40))
-        evaluation = evaluation + cas_pieges() + noyau_reel(VERITE_7792)
+        evaluation = evaluation + cas_pieges() + noyau_reel(VERITE_REFERENCE)
         return entrainement, evaluation
 
     def test_entrainement_mesure_serialisation_rechargement(self, tmp_path: Path) -> None:
@@ -130,7 +130,7 @@ class TestClassifieurMaison:
 
 @pytest.fixture(scope="module")
 def base_ml() -> Iterator[dict[str, Any]]:
-    """Base jetable migrée + vraie fiche 7792-SO validée par le pipeline."""
+    """Base jetable migrée + vraie fiche 1042-EX validée par le pipeline."""
     if not URL_PG:
         pytest.skip("Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests")
     import uuid
@@ -156,9 +156,19 @@ def base_ml() -> Iterator[dict[str, Any]]:
     index.initialize()
     index.run_migrations()
     initialiser_gabarits(index)
-    resultat = depot.deposer_dossier(index, RACINE / "sample_data/CLIENT-7792-SO")
+    resultat = depot.deposer_dossier(index, RACINE / "sample_data/CLIENT-1042-EX")
     assert resultat.get("statut") == "traite"
-    valider_fiche(index, "7792-SO", "test-modele-maison", exiger_revision=False)
+    # Ces tests veulent une fiche « valide », pas une validation HUMAINE :
+    # depuis l'auto-validation (décision du 2026-11-14), 1042-EX score
+    # 0,929 et arrive déjà « valide » au-dessus du seuil. Appeler
+    # `valider_fiche` sans vérifier renvoie alors 409 et fait échouer les
+    # DEUX tests en amont. On ne valide donc que ce qui attend encore.
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute("SELECT statut FROM fiche WHERE code = %s", ("1042-EX",))
+            ligne = cursor.fetchone()
+    if ligne and ligne[0] == "a_valider":
+        valider_fiche(index, "1042-EX", "test-modele-maison", exiger_revision=False)
     try:
         yield {"index": index, "url": url_base, "nom": nom_base}
     finally:
@@ -194,21 +204,21 @@ def test_peuplement_active_la_source_vecteurs(base_ml: dict[str, Any]) -> None:
             assert cursor.fetchone()[0] == 1
 
     reponse = rechercher_fiches(
-        index, requete="spi sailonet", encode_requete=encodeur.vecteur_requete
+        index, requete="spi exemplia", encode_requete=encodeur.vecteur_requete
     )
     assert "vecteurs" in reponse["sources_actives"], "la source dormante du Lot E doit s'activer"
 
     # Non-régression du jeu réel : le lexical trouvait 13/13, la fusion RRF ne
     # peut pas retirer un candidat — le rappel doit tenir.
     requetes = (
-        "7792-SO", "7792", "sailonet", "cruette", "29er", "spi",
-        "spi asymétrique", "monofilm", "monofilm k903", "spi sailonet 2026",
+        "1042-EX", "1042", "exemplia", "demo", "29er", "spi",
+        "spi asymétrique", "monofilm", "monofilm k903", "spi exemplia 2026",
         "spi 29er", "monofime", "voile de portant",
     )
     manquants = []
     for requete in requetes:
         rep = rechercher_fiches(index, requete=requete, encode_requete=encodeur.vecteur_requete)
-        if "7792-SO" not in [r["code"] for r in rep["resultats"]]:
+        if "1042-EX" not in [r["code"] for r in rep["resultats"]]:
             manquants.append(requete)
     assert not manquants, f"régression du rappel réel après activation vecteurs : {manquants}"
 
@@ -375,7 +385,7 @@ def test_encodeur_e5_reel_si_poids_presents() -> None:
     from seamtech_search.ml.encodeur import EncodeurONNX
 
     encodeur = EncodeurONNX(Path(dossier))
-    vecteurs = encodeur.encoder(["spi asymétrique sailonet", "voile de portant 29er"])
+    vecteurs = encodeur.encoder(["spi asymétrique exemplia", "voile de portant 29er"])
     assert vecteurs.shape == (2, DIMENSION_EMBEDDING)
     import numpy as np
 

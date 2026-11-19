@@ -37,7 +37,7 @@ from seamtech_search.fiches.modeles import FicheExtraite
 LARGEUR, HAUTEUR = 595.0, 842.0  # A4 portrait, comme les fiches de l'atelier.
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 RACINE = Path(__file__).resolve().parent.parent
-ARCHIVE_7792 = RACINE / "sample_data/CLIENT-7792-SO"
+ARCHIVE_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX"
 
 
 def _ecrire(chemin: Path, cellules: list[tuple[float, float, str]]) -> Path:
@@ -140,9 +140,9 @@ class TestCodeDepuisNomDeFichier:
         [
             ("ZZ 075a_ffab.pdf", "ZZ 075A"),
             ("ST 508_ffab.pdf", "ST 508"),
-            ("fiche-7792-SO_ffab.pdf", "7792-SO"),
-            ("fiche GV Full 250329 AJA.pdf", "250329 AJA"),
-            ("250328 AJA.pdf", "250328 AJA"),
+            ("fiche-1042-EX_ffab.pdf", "1042-EX"),
+            ("fiche GV Full 250107 AB.pdf", "250107 AB"),
+            ("250108 AB.pdf", "250108 AB"),
             ("genua.pdf", None),
             ("plan-voilier.pdf", None),
             ("2024.pdf", None),
@@ -261,16 +261,16 @@ class TestDepotSansCode:
                 cursor.execute("SELECT COUNT(*) FROM fiche")
                 assert int(cursor.fetchone()[0]) == 0, "un refus ne doit rien écrire"
 
-    def test_fiche_7792_reste_identique(self, base, tmp_path: Path) -> None:
+    def test_fiche_reference_reste_identique(self, base, tmp_path: Path) -> None:
         """Non-régression : le corpus de référence garde son code lu dans le PDF."""
-        dossier = tmp_path / "CLIENT-7792-SO"
+        dossier = tmp_path / "CLIENT-1042-EX"
         dossier.mkdir()
-        shutil.copy(ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf", dossier / "fiche-7792-SO_ffab.pdf")
+        shutil.copy(ARCHIVE_REFERENCE / "fiche-1042-EX_ffab.pdf", dossier / "fiche-1042-EX_ffab.pdf")
 
         resultat = depot.deposer_dossier(base, dossier)
 
         assert resultat["statut"] == "traite"
-        assert resultat["fiche"] == "7792-SO"
+        assert resultat["fiche"] == "1042-EX"
 
 
 def codepoint() -> str:
@@ -490,8 +490,8 @@ class TestCodeDepuisNomDeDossier:
             ("TRINTELLA 34 ST34", "ST34"),
             ("ALLURES 45 ST67A", "ST67A"),
             ("BALI 4.5 - 280224VA", "280224VA"),
-            ("DAMIEN 4 - 250821JA", "250821JA"),
-            ("DEHLER 39 - 250329AJA", "250329AJA"),
+            ("CORPUS-05 - 250106AB", "250106AB"),
+            ("DEHLER 39 - 250107AB", "250107AB"),
             ("VOILES 2024", None),
             ("FICHE_GV_FFAB", None),
             ("dossier sans reference", None),

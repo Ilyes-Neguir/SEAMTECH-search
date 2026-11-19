@@ -109,7 +109,7 @@ toujours explicite** avec facette et badge.
   `tests/test_lot7_accessoires.py` : 5 tests purs + 5 PG), frontend,
   intégration, docker, OCR, sauvegarde, recettes ; e2e : **« 4 parcours
   Lot 7 verts au premier essai »** + tous les parcours des lots précédents
-  toujours verts (7792-SO 918 ms).
+  toujours verts (1042-EX 918 ms).
 - **Qualification reserves** `40334010160` — success ; **Qualification
   native** `40334010127` — success ; **Perf comparaison** `40334010553` —
   success.

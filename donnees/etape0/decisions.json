@@ -1,0 +1,22 @@
+{
+  "fusions": [
+    {
+      "axe": "gamme",
+      "decideur": "exploitante",
+      "decision": "ne_pas_fusionner",
+      "motif": "Deux gammes distinctes : la valeur courte est une gamme, la longue une gamme précisée par son support. Décision de l'exploitante, 2026-11-09. (Les valeurs sont assainies : ce que l'extraction avait avalé après la gamme est remplacé par un marqueur, le motif ne le nomme donc pas.)",
+      "valeur_a": "enrouleur",
+      "valeur_b": "enrouleur <nom propre>"
+    },
+    {
+      "axe": "gamme",
+      "decideur": "exploitante",
+      "decision": "fusionner",
+      "graphie_retenue": "enrouleur surface",
+      "motif": "Variante d'écriture d'une même gamme : la valeur longue précise le support, ce n'est pas une gamme distincte — à distinguer de l'arbitrage du 2026-11-09 sur la valeur où les deux désignaient deux gammes réellement distinctes. Décision de l'exploitante, 2026-11-10.",
+      "valeur_a": "enrouleur",
+      "valeur_b": "enrouleur surface"
+    }
+  ],
+  "version": 1
+}

@@ -264,25 +264,25 @@ def publier_mesure_perf(nom: str, p50_ms: float, p95_ms: float, max_ms: float, n
 
 # ---------------------------------------------------------------------------
 # Lot I — assistant sourcé : jeu d'essai des 8 questions + semis partagés.
-# Le jeu est ÉTIQUETÉ : la fiche 7792-SO vient du fonds RÉEL (document client,
+# Le jeu est ÉTIQUETÉ : la fiche 1042-EX vient du fonds RÉEL (document client,
 # extraction gabarit), les cotes ajoutées au corpus Lot E sont SYNTHÉTIQUES
 # (méthode 'synthetique' dans fiche_champ_extrait, jamais confondues avec le
 # réel). Le même semis sert aux tests PostgreSQL ET au script de mesure
 # (scripts/mesure_assistant.py) — une seule définition, jamais deux.
 # ---------------------------------------------------------------------------
 
-CHEMIN_FICHE_REELLE = Path(__file__).resolve().parents[1] / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+CHEMIN_FICHE_REELLE = Path(__file__).resolve().parents[1] / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 
 # (question, étiquette) — l'étiquette dit DE QUOI VIENT la réponse attendue.
 JEU_8_QUESTIONS: tuple[tuple[str, str], ...] = (
-    ("quelle est la SLU de la fiche 7792-SO ?", "cote par fiche — fonds réel (6,60 m, vérité terrain)"),
+    ("quelle est la SLU de la fiche 1042-EX ?", "cote par fiche — fonds réel (6,60 m, vérité terrain)"),
     ("quelles voiles pour le bateau 29er ?", "voiles par bateau — fonds réel (Spi Asymétrique)"),
     ("combien de fiches de type portant en 2024 ?", "comptage — corpus synthétique (1 fiche : 0812-SPI-001)"),
     ("quelles fiches ont une SLU entre 6,5 et 6,7 m ?", "intervalle — synthétique + réel (3 fiches)"),
     ("quelle matière pour le galon de bordure ?", "attribut galon — fonds réel (Nylon)"),
-    ("quelle est la longueur du mât de la fiche 7792-SO ?", "SANS SOURCE → refus explicite"),
-    ("quelle est la matière de la fiche 7792-SO ?", "AMBIGU → interprétations sourcées"),
-    ("quel est le surplus de jonction de la fiche 7792-SO ?", "non applicable RG5 (consigné « ~ »)"),
+    ("quelle est la longueur du mât de la fiche 1042-EX ?", "SANS SOURCE → refus explicite"),
+    ("quelle est la matière de la fiche 1042-EX ?", "AMBIGU → interprétations sourcées"),
+    ("quel est le surplus de jonction de la fiche 1042-EX ?", "non applicable RG5 (consigné « ~ »)"),
 )
 
 # Cotes SLU SYNTHÉTIQUES ajoutées au corpus Lot E (jeu « finie ») :
@@ -318,8 +318,16 @@ def enrichir_corpus_assistant(index: Any) -> dict[str, float]:
 
 def semer_base_assistant(index: Any) -> dict[str, Any]:  # noqa: ANN401 - SearchIndex réel
     """Semis complet de l'assistant : corpus Lot E + cotes synthétiques + la
-    VRAIE fiche 7792-SO par le pipeline réglé (extraction gabarit → écriture
-    RG3 → validation humaine qui rend cherchable)."""
+    VRAIE fiche 1042-EX par le pipeline réglé (extraction gabarit → écriture
+    → statut « valide », ce qui la rend cherchable dans l'archive de
+    confiance).
+
+    L'écriture applique la règle d'arrivée en vigueur (auto-validation
+    au-dessus du seuil, décision du commanditaire du 2026-11-14) : 1042-EX
+    score 0,929 et peut donc arriver déjà « valide ». Le semis veut une
+    fiche VALIDE, pas une validation HUMAINE : on ne valide que ce qui
+    attend encore, sinon `valider_fiche` renvoie 409 et les 21 tests de
+    l'assistant échouent en amont sans rien mesurer."""
     from seamtech_search.fiches.extraction import extraire_fiche
     from seamtech_search.fiches.gabarits import charger_gabarits, initialiser_gabarits
     from seamtech_search.fiches.persistance import ecrire_fiche
@@ -334,7 +342,12 @@ def semer_base_assistant(index: Any) -> dict[str, Any]:  # noqa: ANN401 - Search
         raise RuntimeError(f"la vraie fiche devait être créée, action = {action}")
     # Mise en place de fixture : aucune concurrence possible ici — l'absence
     # de révision est DEMANDÉE explicitement (jamais un repli silencieux).
-    valider_fiche(index, fiche.code, "assistant", exiger_revision=False)
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute("SELECT statut FROM fiche WHERE code = %s", (fiche.code,))
+            ligne = cursor.fetchone()
+    if ligne and ligne[0] == "a_valider":
+        valider_fiche(index, fiche.code, "assistant", exiger_revision=False)
     ids[fiche.code] = id_fiche
     return {"ids": ids, "fiche": fiche}
 

@@ -146,7 +146,7 @@ Preuves PostgreSQL/HTTP réelles :
 
 Le parcours navigateur `frontend/e2e/recherche-extrait.spec.ts` ajoute
 2 tests live : extrait pertinent avec vrai `<mark>` pour une recherche texte,
-et aperçu borné dans le parcours fiche réelle 7792-SO. La porte live de CI
+et aperçu borné dans le parcours fiche réelle 1042-EX. La porte live de CI
 passe explicitement de **10 à 12 tests attendus**, toujours avec 0 flaky et
 0 sauté ; la nouvelle spec n'est donc pas un fichier dormant.
 

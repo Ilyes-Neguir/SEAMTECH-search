@@ -5,7 +5,7 @@ restaient sous ``uploads/lots-televerses``, sur le disque local ; leur
 promotion vers MinIO/R2 n'était pas démontrée. Un sauvegarde de PostgreSQL
 seul, ou de MinIO seul, ne restituait donc pas les pièces.
 
-Ces tests déposent un dossier RÉEL (fiche 7792-SO du corpus de recette), avec
+Ces tests déposent un dossier RÉEL (fiche 1042-EX du corpus de recette), avec
 un stockage objet branché sur un magasin en mémoire qui conserve les octets —
 donc la vérification post-envoi est réelle, elle relit ce qui a été stocké.
 
@@ -35,13 +35,13 @@ from unittest.mock import patch
 import pytest
 
 from seamtech_search.config import AppConfig
-from seamtech_search.fiches import depot
+from seamtech_search.fiches import auto_validation, depot
 from seamtech_search.fiches.promotion import promouvoir_en_attente
 from seamtech_search.storage import S3StorageClient
 from tests.s3_en_memoire import S3EnMemoire
 
 RACINE = Path(__file__).resolve().parent.parent
-ARCHIVE_7792 = RACINE / "sample_data/CLIENT-7792-SO"
+ARCHIVE_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX"
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 
 pytestmark = pytest.mark.postgres
@@ -49,6 +49,31 @@ pytestmark = pytest.mark.postgres
 
 def _sha256(chemin: Path) -> str:
     return hashlib.sha256(chemin.read_bytes()).hexdigest()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def seuil_auto_validation_hors_atteinte() -> Iterator[None]:
+    """Porte le seuil d'auto-validation hors d'atteinte pour TOUT ce module.
+
+    POURQUOI : ce module éprouve un parcours qui part d'une fiche EN
+    ATTENTE humaine (correction, promotion, rejeu, pièces jointes). Depuis
+    l'auto-validation au seuil de 90 % — décision du commanditaire du
+    2026-11-14 — la fiche réelle du corpus score 0,929 et arrive « valide »
+    : RG11 refuse alors correction et re-dépôt, et le module mesurerait ce
+    refus au lieu du parcours qu'il a pour objet.
+
+    Le seuil est porté à 1,0 — inatteignable, la comparaison étant STRICTE
+    — et non contourné par un patch de la fonction : la règle reste celle
+    du produit, seul son réglage change. Portée MODULE et déclarée AVANT
+    la fixture de base : le dépôt a lieu dans cette autre fixture module,
+    un patch de portée fonction s'appliquerait trop tard.
+
+    Ce que ce module ne couvre donc plus est prouvé ailleurs, et
+    explicitement, dans ``tests/test_auto_validation_persistance.py``.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(auto_validation, "SEUIL_AUTO_VALIDATION", 1.0)
+        yield
 
 
 @pytest.fixture(scope="module")
@@ -98,7 +123,7 @@ def dossier_stage(tmp_path: Path, request: pytest.FixtureRequest) -> Path:
     affaire = "".join(c if c.isalnum() else "-" for c in request.node.name)[:40]
     dossier = tmp_path / "uploads" / "lots-televerses" / "jeton-test" / "fichiers" / "2026" / affaire
     dossier.mkdir(parents=True)
-    shutil.copy(ARCHIVE_7792 / "fiche-7792-SO_ffab.pdf", dossier / "fiche.pdf")
+    shutil.copy(ARCHIVE_REFERENCE / "fiche-1042-EX_ffab.pdf", dossier / "fiche.pdf")
     (dossier / "croquis.md").write_text("notes atelier, pièce jointe", encoding="utf-8")
     return dossier
 

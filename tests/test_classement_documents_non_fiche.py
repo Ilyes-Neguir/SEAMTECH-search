@@ -229,7 +229,7 @@ def test_un_mot_sans_chiffre_n_est_jamais_un_code() -> None:
     """Tous les codes réels portent un chiffre ; « pour » n'en est pas un."""
     from seamtech_search.fiches.extraction import _code_plausible
 
-    for vrai in ("ST64", "ST 074b", "170124CS", "250821JA", "ST 508V2", "ST 089"):
+    for vrai in ("ST64", "ST 074b", "170124CS", "250106AB", "ST 508V2", "ST 089"):
         assert _code_plausible(vrai) is True, vrai
     for faux in ("pour", "Commande", "", "   ", None, "Longueur du lazy"):
         assert _code_plausible(faux) is False, faux

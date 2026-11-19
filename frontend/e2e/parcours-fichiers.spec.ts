@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises"
 import path from "node:path"
 import { APPROBATEUR, signIn, signInWith } from "./helpers"
 
-const CODE_REEL = "7792-SO"
+const CODE_REEL = "1042-EX"
 
 // Ces parcours exigent PostgreSQL seedé par seed-live-pg.py, notamment pour
 // vérifier les fiches et les dimensions réelles sans inventer de données.

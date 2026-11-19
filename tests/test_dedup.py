@@ -3,7 +3,7 @@
 Ce que ces tests prouvent, dans l'ordre du contrat :
 
 1. **Exact par empreinte** — deux fiches qui partagent la pièce jointe du fonds
-   RÉEL (``7792-SO``, sha256 ``43afc51e…``) forment UN groupe, et ce groupe porte
+   RÉEL (``1042-EX``, sha256 ``43afc51e…``) forment UN groupe, et ce groupe porte
    bien la vraie empreinte.
 2. **Faux positif écarté** — deux fiches de MÊME TITRE mais de clients
    différents ne produisent AUCUN ``doublon_exact`` (un titre ressemblant n'est
@@ -34,7 +34,7 @@ from seamtech_search.indexer import SearchIndex
 from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parent.parent
-PDF_REEL_7792 = RACINE / "sample_data" / "CLIENT-7792-SO" / "fiche-7792-SO_ffab.pdf"
+PDF_SYNTHETIQUE_REFERENCE = RACINE / "sample_data" / "CLIENT-1042-EX" / "fiche-1042-EX_ffab.pdf"
 
 URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 
@@ -157,21 +157,29 @@ def _compter_liens(index: Any) -> int:  # noqa: ANN401
 
 
 @pytest.mark.ci_guard_dedup
-def test_doublons_exacts_le_pdf_reel_en_double(base_dedup: dict[str, Any]) -> None:
-    """LE cas réel : ``fiche-7792-SO_ffab.pdf`` (sha256 ``43afc51e…``) attaché à
-    DEUX fiches. Elles doivent former UN groupe exact — et un seul, portant la
-    VRAIE empreinte du fichier réel.
+def test_doublons_exacts_le_pdf_de_reference_en_double(base_dedup: dict[str, Any]) -> None:
+    """LE cas d'espèce : ``fiche-1042-EX_ffab.pdf`` attaché à DEUX fiches. Elles
+    doivent former UN groupe exact — et un seul, portant la VRAIE empreinte du
+    fichier.
 
     Une TROISIÈME fiche porte une pièce d'empreinte différente : si la clé de
     rapprochement était neutralisée (colonne remplacée par une constante), les
     trois fiches seraient agrégées ensemble et ce test ROUGIRAIT — c'est le
     sabotage du garde-fou CI « Garde-fou dédup ».
+
+    L'empreinte n'est plus ÉPINGLÉE à une valeur : la fiche est désormais
+    SYNTHÉTIQUE et régénérable, donc sans empreinte stable (ReportLab écrit des
+    métadonnées variables). On vérifie sa FORME, ce qui attrape un fichier
+    absent, vide ou tronqué — et non sa valeur, qui changera à la prochaine
+    régénération.
     """
     index = base_dedup["index"]
-    empreinte_reelle = empreinte_fichier(PDF_REEL_7792)
-    assert empreinte_reelle == "43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40", (
-        "le fonds de test doit être le PDF réel 7792-SO (empreinte 43afc51e…)"
+    empreinte_reelle = empreinte_fichier(PDF_SYNTHETIQUE_REFERENCE)
+    assert len(empreinte_reelle) == 64 and all(c in "0123456789abcdef" for c in empreinte_reelle), (
+        "la fiche de référence doit fournir un SHA-256 calculé (fichier absent, "
+        f"vide ou illisible ?) : {empreinte_reelle!r}"
     )
+    assert empreinte_reelle != SHA_AUTRE
 
     id_a = _creer_fiche(index, "L1-GV-001", "Grand-voile régate First 30")
     id_b = _creer_fiche(index, "L1-GV-002", "Grand-voile régate First 30")

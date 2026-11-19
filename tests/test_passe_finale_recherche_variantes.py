@@ -52,7 +52,7 @@ def test_analyse_dimension_variantes(requete: str, valeur_attendue: float, cote_
         assert abs(dimension.valeur_pour_cote(cote_attendue) - valeur_attendue) < 1e-6
 
 
-@pytest.mark.parametrize("requete", ["2024", "7792", "SLU", "grand voile", "42 beaufort", ""])
+@pytest.mark.parametrize("requete", ["2024", "1042", "SLU", "grand voile", "42 beaufort", ""])
 def test_pas_de_fausse_dimension(requete: str) -> None:
     """Une année, un code, un entier nu ne sont JAMAIS lus comme une cote."""
     assert analyser_requete_dimension(requete).active is False

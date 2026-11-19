@@ -18,7 +18,7 @@ Ce qui est prouvé ici :
 ⚠️ ÉTIQUETAGE (Tâche 3) : le corpus de ce fichier est SYNTHÉTIQUE — 12 fiches
 valides semées en fixture, et les 50 requêtes de référence sont construites sur
 ce seed. Le rappel 50/50 prouve l'architecture, PAS le fonds réel. La recherche
-sur le fonds réel (vraie fiche 7792-SO, jeu de requêtes réel) est mesurée dans
+sur le fonds réel (vraie fiche 1042-EX, jeu de requêtes réel) est mesurée dans
 ``tests/test_recherche_fonds_reel.py`` et documentée dans
 ``docs/verite_terrain/JEU_REQUETES_REELLES.md``.
 """
@@ -312,7 +312,7 @@ def test_jeu_50_requetes_reference_100_pourcent(base_recherche: dict[str, Any]) 
     """Sortie Phase 3 : 100 % des résultats attendus retrouvés (rappel@10).
     Chiffres MESURÉS sur le corpus SYNTHÉTIQUE de test (12 fiches seed) — ils
     prouvent l'architecture, pas le fonds réel : la re-mesure sur la vraie
-    fiche 7792-SO est dans ``tests/test_recherche_fonds_reel.py`` ; l'échelle
+    fiche 1042-EX est dans ``tests/test_recherche_fonds_reel.py`` ; l'échelle
     10 000 fiches reste à re-mesurer sur données réelles.
 
     Le critère de latence (p95 < 100 ms) n'est PAS asserté ici : il est

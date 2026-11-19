@@ -51,8 +51,8 @@ docker system df            # la part Docker (images, volumes orphelins)
 ## 4. La recherche renvoie vide
 
 ```bash
-# une requête connue doit répondre (la vraie fiche 7792-SO si importée) :
-curl -s -H "X-SEAMTECH-TOKEN: <token>" "http://127.0.0.1:8000/api/search?q=7792-SO"
+# une requête connue doit répondre (la vraie fiche 1042-EX si importée) :
+curl -s -H "X-SEAMTECH-TOKEN: <token>" "http://127.0.0.1:8000/api/search?q=1042-EX"
 ```
 
 - Aucune fiche en base dans les résultats : depuis le contrat du 2026-09-29
@@ -69,8 +69,11 @@ curl -s -H "X-SEAMTECH-TOKEN: <token>" "http://127.0.0.1:8000/api/search?q=7792-
 
 ## 5. Une fiche est bloquée à `a_valider`
 
-- État NORMAL le long du parcours : `a_valider` est le statut d'arrivée (RG3) ;
-  la fiche attend un humain (interface → file de validation).
+- État NORMAL le long du parcours : une fiche reste `a_valider` quand son score
+  d'extraction est ≤ 90 % ou qu'elle porte une anomalie bloquante ; elle attend
+  alors un humain (interface → file de validation). Depuis le 2026-11-14, une
+  fiche au score > 90 % sans anomalie est auto-validée et n'apparaît plus dans
+  la file.
 - Si la validation échoue en interface : noter le message EXACT + la console
   du navigateur, vérifier `/api/health`, réessayer ; si l'échec persiste,
   comparer avec le banc `validate_extraction` (tests) et joindre la sortie

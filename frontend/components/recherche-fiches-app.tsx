@@ -10,6 +10,7 @@ import Link from "next/link"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Search, X, Link as LinkIcon, Check } from "lucide-react"
 import { authedFetch } from "@/lib/authed-fetch"
+import { LIBELLES_VALEURS_FACETTES, libelleFiltreActif } from "@/lib/filtres-recherche"
 import { cn } from "@/lib/utils"
 import { AssistantPanneau } from "@/components/assistant-panneau"
 
@@ -191,12 +192,6 @@ const NATURE_SUGGESTION: Record<string, string> = {
   matiere: "matière",
   gamme: "gamme",
   fiche: "code",
-}
-
-// Libellés humains pour les valeurs de facettes codées (la valeur brute
-// reste la clé du filtre envoyé au backend).
-const LIBELLES_VALEURS_FACETTES: Record<string, Record<string, string>> = {
-  categorie: { voile: "Voiles", accessoire: "Accessoires" },
 }
 
 const LIMITE_DEFAUT = 20
@@ -497,6 +492,17 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
     [requete, dimCote, dimMin, dimMax, tri, lancer],
   )
 
+  const retirerTousLesFiltres = useCallback(() => {
+    // « Tout effacer » remet AUSSI la plage de cotes à zéro : un filtre qu'on
+    // ne voit plus mais qui continue de restreindre les résultats est pire
+    // qu'un filtre voyant.
+    setFiltres({})
+    setDimMin("")
+    setDimMax("")
+    void lancer(requete, {}, dimCote, "", "", tri, 1)
+    setPage(1)
+  }, [requete, dimCote, tri, lancer])
+
   const appliquerDimension = useCallback(
     (cote: string, min: string, max: string) => {
       setDimCote(cote)
@@ -626,7 +632,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
           <select
             value={tri}
             onChange={(e) => changerTri(e.target.value)}
-            className="rounded border border-border bg-background px-2 py-2 text-xs"
+            className="rounded border border-border bg-input px-2 py-2 text-xs text-foreground"
             data-testid="recherche-tri"
             aria-label="Trier les résultats"
           >
@@ -700,7 +706,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
               onClick={() => retirerFiltre(cle)}
               className="flex items-center gap-1.5 rounded-full border border-border bg-accent/30 px-3 py-1 text-xs"
             >
-              <span className="text-muted-foreground">{GROUPE_LIBELLE(cle)} :</span> {valeur}
+              <span className="text-muted-foreground">{GROUPE_LIBELLE(cle)} :</span> {libelleFiltreActif(cle, valeur)}
               <X className="size-3" />
             </button>
           ))}
@@ -729,6 +735,14 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
               <X className="size-3" />
             </button>
           )}
+          <button
+            type="button"
+            onClick={retirerTousLesFiltres}
+            className="rounded border border-border px-2 py-1 text-xs hover:bg-accent/50"
+            data-testid="effacer-tous-les-filtres"
+          >
+            Tout effacer
+          </button>
         </div>
       )}
 
@@ -792,7 +806,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
             <select
               value={dimCote}
               onChange={(e) => changerCoteExploration(e.target.value)}
-              className="mb-2 w-full rounded border border-border bg-background px-2 py-1.5 text-xs"
+              className="mb-2 w-full rounded border border-border bg-input px-2 py-1.5 text-xs text-foreground"
               data-testid="dimension-cote"
               aria-label="Dimension à explorer"
             >
@@ -817,7 +831,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
                 placeholder="min"
                 value={dimMin}
                 onChange={(e) => setDimMin(e.target.value)}
-                className="w-1/2 rounded border border-border bg-background px-2 py-1 text-xs"
+                className="w-1/2 rounded border border-border bg-input px-2 py-1 text-xs text-foreground"
                 data-testid="dimension-min"
               />
               <input
@@ -826,7 +840,7 @@ export function RechercheFichesApp({ assistantActif = true }: { assistantActif?:
                 placeholder="max"
                 value={dimMax}
                 onChange={(e) => setDimMax(e.target.value)}
-                className="w-1/2 rounded border border-border bg-background px-2 py-1 text-xs"
+                className="w-1/2 rounded border border-border bg-input px-2 py-1 text-xs text-foreground"
                 data-testid="dimension-max"
               />
             </div>

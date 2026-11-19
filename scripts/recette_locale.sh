@@ -237,10 +237,40 @@ for chemin in "$@"; do
     cp -r "$chemin" "$SOURCES_HOTE/"
     NB_EXTRA=$((NB_EXTRA + 1))
 done
+# ---------------------------------------------------------------------------
+# 6 bis. REPLI SYNTHÉTIQUE. Les 7 archives du corpus réel ont été PURGÉES du
+#    dépôt : sans archive au rendez-vous, la recette n'aurait plus rien à se
+#    mettre sous la dent et échouerait sur « aucune affaire exploitable ».
+#    Elle se rabat donc sur les jeux d'essai SYNTHÉTIQUES du dépôt
+#    (sample_data/), ce qui la garde exécutable et significative : le flux
+#    complet est toujours prouvé, sur un corpus qui n'est pas celui du client.
+#    Fournir un vrai corpus reste possible et prioritaire : un chemin argument
+#    ou un ZIP présent dans le dépôt prend le pas sur ce repli.
+# ---------------------------------------------------------------------------
+NB_SYNTH=0
+if [ "$NB_ZIP" -eq 0 ] && [ "$NB_EXTRA" -eq 0 ]; then
+    # Un corpus DÉDIÉ, pas les jeux de sample_data/ au petit bonheur : ceux-ci
+    # servent à d'autres tests, un seul porte une vraie fiche de fabrication,
+    # et la recette a besoin de plusieurs affaires (cohorte >= 3) pour que
+    # facettes, filtres et rejeu idempotent veuillent dire quelque chose.
+    # sample_data/recette/ est produit par
+    # scripts/generer_corpus_recette_synthetique.py.
+    for jeu in "$RACINE"/sample_data/recette/CLIENT-*; do
+        [ -d "$jeu" ] || continue
+        cp -r "$jeu" "$SOURCES_HOTE/"
+        NB_SYNTH=$((NB_SYNTH + 1))
+    done
+    if [ "$NB_SYNTH" -eq 0 ]; then
+        controle "depot-archives" "FAIL" "ni archive du dépôt, ni chemin argument, ni corpus synthétique dans sample_data/recette/ : la recette n'a rien à importer"
+        exit 1
+    fi
+    echo "REPLI : aucun ZIP du dépôt (corpus réel purgé) — $NB_SYNTH affaire(s) SYNTHÉTIQUE(S) de sample_data/recette/ importée(s) à la place. Le flux est prouvé, pas le corpus client."
+fi
+
 # Le conteneur web (utilisateur seamtech) doit pouvoir LIRE les sources
 # copiées — y compris les chemins argument (espaces/accents) et leurs arbres.
 chmod -R a+rwX "$SOURCES_HOTE" 2>/dev/null || true
-echo "Sources en zone de travail : $NB_ZIP ZIP du dépôt + $NB_EXTRA chemin(s) argument."
+echo "Sources en zone de travail : $NB_ZIP ZIP du dépôt + $NB_EXTRA chemin(s) argument + $NB_SYNTH jeu(x) synthétique(s)."
 
 # ---------------------------------------------------------------------------
 # 7. Vérificateur fonctionnel unique, exécuté DANS le conteneur web.

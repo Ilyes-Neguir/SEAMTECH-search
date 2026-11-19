@@ -54,7 +54,7 @@ Ne pas déclarer PASS MinIO après un test s3rver.
    `reference_propre.txt`.
 4. Index → recherche d'un mot OCR → téléchargement du **fichier
    original** (empreinte inchangée).
-5. PDF texte natif (fiche 7792-SO) : OCR non déclenché.
+5. PDF texte natif (fiche 1042-EX) : OCR non déclenché.
 6. Scan illisible : statut `unavailable`/`error` explicite, pas un
    faux succès.
 

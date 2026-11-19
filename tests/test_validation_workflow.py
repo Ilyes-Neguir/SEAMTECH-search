@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from seamtech_search.config import AppConfig
+from seamtech_search.fiches import auto_validation
 from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -25,10 +26,84 @@ URL_PG = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 pytestmark = pytest.mark.postgres  # couche métier PostgreSQL uniquement (§17.1)
 
 
+def _declarer_bateaux_au_referentiel(
+    index: Any,  # noqa: ANN401
+    *,
+    effacer_anomalies: bool = False,
+) -> None:
+    """Déclare au référentiel les bateaux déjà déposés, sans les nommer ici.
+
+    Le contrôle du Lot 1.2 ne s'exécute que si le référentiel est renseigné
+    (côté production, un référentiel illisible rend ``None`` et non un ensemble
+    vide : une liste vide déclarerait TOUT hors référentiel). Une épreuve qui
+    veut une fiche sans anomalie doit donc fournir un référentiel qui la
+    connaît. Les noms sont relevés dans les fiches déposées, jamais recopiés.
+    """
+    from seamtech_search.fiches.normalisation import forme_canonique
+
+    with index.connect() as connexion:
+        with connexion.cursor() as cursor:
+            cursor.execute(
+                "SELECT DISTINCT b.nom FROM fiche f JOIN bateau b "
+                "ON b.id_bateau = f.id_bateau WHERE b.nom IS NOT NULL"
+            )
+            noms = [ligne[0] for ligne in cursor.fetchall()]
+            for nom in noms:
+                cle = forme_canonique(nom)
+                if not cle:
+                    continue
+                cursor.execute(
+                    "INSERT INTO boat_models (nom_canonique, cle_normalisee, source) "
+                    "VALUES (%s, %s, 'test') ON CONFLICT (cle_normalisee) DO NOTHING",
+                    (nom, cle),
+                )
+            if effacer_anomalies:
+                cursor.execute("DELETE FROM fiche_anomalie")
+        connexion.commit()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def seuil_auto_validation_hors_atteinte() -> Iterator[None]:
+    """Porte le seuil d'auto-validation hors d'atteinte pour TOUT ce module.
+
+    POURQUOI CE MODULE ENTIER : il décrit le workflow de validation
+    HUMAINE — fiches en attente, file de validation, transitions
+    a_valider → valide → rejete, corrections. Toutes ces mécaniques
+    partent d'une fiche « a_valider ».
+
+    Depuis l'auto-validation au seuil de 90 % (décision du commanditaire
+    du 2026-11-14), les deux fiches réelles déposées ici — 1042-EX
+    (0,929) et 0901-MM — arrivent « valide » : la file se vide, la
+    validation renvoie 409, la correction est refusée par RG11. Le module
+    mesurerait l'auto-validation au lieu du workflow humain.
+
+    Le seuil est porté à 1,0 — inatteignable, la comparaison étant
+    STRICTE — et non contourné par un patch de la fonction : la règle
+    reste celle du produit, seul son réglage change.
+
+    Ce que ce module ne couvre donc plus est prouvé ailleurs, et
+    explicitement, dans ``tests/test_auto_validation_persistance.py`` :
+    qu'une fiche auto-validée quitte la file de validation.
+    """
+    # Portée MODULE, et déclarée avant `base_workflow` : le dépôt des
+    # fiches a lieu dans cette autre fixture module. Un patch de portée
+    # fonction s'appliquerait APRÈS le dépôt — trop tard, les fiches
+    # seraient déjà auto-validées.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(auto_validation, "SEUIL_AUTO_VALIDATION", 1.0)
+        yield
+
+
 @pytest.fixture(scope="module")
 def base_workflow() -> Iterator[dict[str, Any]]:
     """Base jetable (migrations + gabarits) puis dépôt de DEUX fiches réelles
-    ``a_valider`` (7792-SO, 0901-MM) par le moteur du Lot C (RG3)."""
+    ``a_valider`` (1042-EX, 0901-MM) par le moteur du Lot C.
+
+    Elles sont maintenues en « a_valider » par la fixture
+    ``seuil_auto_validation_hors_atteinte`` : sans elle, l'auto-validation
+    les validerait à l'arrivée et le workflow humain n'aurait plus rien à
+    valider.
+    """
     import shutil
     import uuid
 
@@ -56,13 +131,27 @@ def base_workflow() -> Iterator[dict[str, Any]]:
     initialiser_gabarits(index)
     racine_essai = Path(f"/tmp/valid-dossiers-{nom_base}")
     for nom, source in (
-        ("CLIENT-7792-SO", RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"),
+        ("CLIENT-1042-EX", RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"),
         ("CLIENT-GENOA", RACINE / "sample_data/CLIENT-GENOA/fiche-genois.pdf"),
     ):
         dossier = racine_essai / nom
         dossier.mkdir(parents=True)
         (dossier / "fiche.pdf").write_bytes(source.read_bytes())
         depot.deposer_dossier(index, dossier)
+    # Lot 1.2, branché en A.3 : le dépôt transmet désormais le référentiel des
+    # bateaux. Conséquence voulue — et piège pour ces épreuves — le référentiel
+    # se REMPLIT au fil du dépôt : le premier dossier inscrit son bateau, et le
+    # suivant est donc évalué contre un référentiel qui ne le connaît pas encore.
+    # Un dépôt unique par dossier ne suffit plus à obtenir des fiches saines.
+    #
+    # On dépose donc deux fois : une première pour connaître les bateaux, puis on
+    # les déclare, on efface les anomalies du premier passage (aucune écriture ne
+    # les supprime : fiche_anomalie s'ajoute, elle ne se remplace pas) et on
+    # rejoue les contrôles sur un référentiel complet. Les noms sont relevés en
+    # base, jamais recopiés ici.
+    _declarer_bateaux_au_referentiel(index, effacer_anomalies=True)
+    for nom in ("CLIENT-1042-EX", "CLIENT-GENOA"):
+        depot.deposer_dossier(index, racine_essai / nom)
     try:
         yield {"index": index, "url": url_base, "racine_essai": racine_essai}
     finally:
@@ -130,56 +219,56 @@ def _dossier_reprise(base: dict, nom: str) -> Path:
     """Un dossier neuf portant le même PDF (pour rejouer une extraction)."""
     dossier = base["racine_essai"] / nom
     dossier.mkdir(parents=True, exist_ok=True)
-    (dossier / "fiche.pdf").write_bytes((RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf").read_bytes())
+    (dossier / "fiche.pdf").write_bytes((RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf").read_bytes())
     return dossier
 
 
 class TestTransitionsDeStatut:
     def test_valider_une_fiche_a_valider(self, base_workflow: dict, client: TestClient) -> None:
-        assert _statut(base_workflow, "7792-SO") == "a_valider"  # RG3
-        revision = _revision(base_workflow, "7792-SO")
+        assert _statut(base_workflow, "1042-EX") == "a_valider"  # RG3
+        revision = _revision(base_workflow, "1042-EX")
         reponse = client.post(
-            "/fiches/7792-SO/valider",
+            "/fiches/1042-EX/valider",
             json={"utilisateur": "alice", "commentaire": "conforme", "revision": revision},
         )
         assert reponse.status_code == 200 and reponse.json()["statut"] == "valide"
         assert reponse.json()["revision"] == revision + 1, "la décision doit faire avancer la révision"
-        assert _statut(base_workflow, "7792-SO") == "valide"
-        assert ("valider", "a_valider", "valide") in _journal(base_workflow, "7792-SO")
+        assert _statut(base_workflow, "1042-EX") == "valide"
+        assert ("valider", "a_valider", "valide") in _journal(base_workflow, "1042-EX")
 
     def test_valider_deux_fois_refuse(self, base_workflow: dict, client: TestClient) -> None:
         reponse = client.post(
-            "/fiches/7792-SO/valider",
-            json={"utilisateur": "alice", "revision": _revision(base_workflow, "7792-SO")},
+            "/fiches/1042-EX/valider",
+            json={"utilisateur": "alice", "revision": _revision(base_workflow, "1042-EX")},
         )
         assert reponse.status_code == 409 and "a_valider" in reponse.json()["detail"]
 
     def test_rouvrir_une_fiche_validee(self, base_workflow: dict, client: TestClient) -> None:
         reponse = client.post(
-            "/fiches/7792-SO/rouvrir",
-            json={"utilisateur": "bob", "commentaire": "coquille vue", "revision": _revision(base_workflow, "7792-SO")},
+            "/fiches/1042-EX/rouvrir",
+            json={"utilisateur": "bob", "commentaire": "coquille vue", "revision": _revision(base_workflow, "1042-EX")},
         )
         assert reponse.status_code == 200 and reponse.json()["statut"] == "a_valider"
-        assert _statut(base_workflow, "7792-SO") == "a_valider"
-        assert ("rouvrir", "valide", "a_valider") in _journal(base_workflow, "7792-SO")
+        assert _statut(base_workflow, "1042-EX") == "a_valider"
+        assert ("rouvrir", "valide", "a_valider") in _journal(base_workflow, "1042-EX")
 
     def test_rejeter_sans_motif_refuse_avec_motif_ok(self, base_workflow: dict, client: TestClient) -> None:
-        revision = _revision(base_workflow, "7792-SO")
-        reponse = client.post("/fiches/7792-SO/rejeter", json={"utilisateur": "bob", "revision": revision})
+        revision = _revision(base_workflow, "1042-EX")
+        reponse = client.post("/fiches/1042-EX/rejeter", json={"utilisateur": "bob", "revision": revision})
         assert reponse.status_code == 422 and "motif" in reponse.json()["detail"].lower()
         reponse = client.post(
-            "/fiches/7792-SO/rejeter",
+            "/fiches/1042-EX/rejeter",
             json={"utilisateur": "bob", "motif": "gabarit douteux", "revision": revision},
         )
         assert reponse.status_code == 200 and reponse.json()["statut"] == "rejete"
-        assert ("rejeter", "a_valider", "rejete") in _journal(base_workflow, "7792-SO")
+        assert ("rejeter", "a_valider", "rejete") in _journal(base_workflow, "1042-EX")
         # rejeter une fiche rejetée → 409 ; rouvrir la rend a_valider
-        rev_rejetee = _revision(base_workflow, "7792-SO")
+        rev_rejetee = _revision(base_workflow, "1042-EX")
         assert client.post(
-            "/fiches/7792-SO/rejeter", json={"utilisateur": "bob", "motif": "x", "revision": rev_rejetee}
+            "/fiches/1042-EX/rejeter", json={"utilisateur": "bob", "motif": "x", "revision": rev_rejetee}
         ).status_code == 409
         assert client.post(
-            "/fiches/7792-SO/rouvrir", json={"utilisateur": "bob", "revision": rev_rejetee}
+            "/fiches/1042-EX/rouvrir", json={"utilisateur": "bob", "revision": rev_rejetee}
         ).status_code == 200
 
     def test_fiche_inconnue_404(self, client: TestClient) -> None:
@@ -194,12 +283,12 @@ class TestTransitionsDeStatut:
 class TestCorrectionEtJournal:
     def test_corriger_un_champ_trace_tout(self, base_workflow: dict, client: TestClient) -> None:
         reponse = client.post(
-            "/fiches/7792-SO/corriger",
+            "/fiches/1042-EX/corriger",
             json={
                 "champ": "fiche.designation",
                 "valeur": "Spi Asymétrique Medium Régate 2",
                 "utilisateur": "carole",
-                "revision": _revision(base_workflow, "7792-SO"),
+                "revision": _revision(base_workflow, "1042-EX"),
             },
         )
         assert reponse.status_code == 200
@@ -212,11 +301,11 @@ class TestCorrectionEtJournal:
                     "JOIN fiche f ON f.id_fiche = c.id_fiche "
                     "LEFT JOIN utilisateur u ON u.id_utilisateur = c.corrige_par "
                     "WHERE f.code = %s AND c.champ = %s",
-                    ("7792-SO", "fiche.designation"),
+                    ("1042-EX", "fiche.designation"),
                 )
                 valeur, corrige, par = cursor.fetchone()
         assert valeur == "Spi Asymétrique Medium Régate 2" and corrige is True and par == "carole"
-        assert any(action == "corriger" for action, _, _ in _journal(base_workflow, "7792-SO"))
+        assert any(action == "corriger" for action, _, _ in _journal(base_workflow, "1042-EX"))
 
     def test_verrou_rg11_cote_depot_re_extraction_refusee(self, base_workflow: dict, tmp_path: Path) -> None:
         """RG11 côté dépôt : ré-extraction d'une fiche portant une correction
@@ -229,35 +318,35 @@ class TestCorrectionEtJournal:
                 cursor.execute(
                     "SELECT COUNT(*) FROM fiche_champ_extrait c JOIN fiche f ON f.id_fiche = c.id_fiche "
                     "WHERE f.code = %s AND c.corrige",
-                    ("7792-SO",),
+                    ("1042-EX",),
                 )
                 assert int(cursor.fetchone()[0]) >= 1, "le scénario exige une fiche avec correction"
         resultat = depot.deposer_dossier(index, _dossier_reprise(base_workflow, "AFFAIRE-RG11"))
         assert resultat["statut"] == "echec" and "RG11" in (resultat["raison"] or ""), resultat
         # la fiche (a_valider, c'est le verrou corrections qui a parlé) et sa
         # correction sont intactes
-        assert _statut(base_workflow, "7792-SO") == "a_valider"
+        assert _statut(base_workflow, "1042-EX") == "a_valider"
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
                 cursor.execute(
                     "SELECT c.valeur_normalisee FROM fiche_champ_extrait c JOIN fiche f ON f.id_fiche = c.id_fiche "
                     "WHERE f.code = %s AND c.corrige",
-                    ("7792-SO",),
+                    ("1042-EX",),
                 )
                 assert cursor.fetchone()[0] == "Spi Asymétrique Medium Régate 2"
 
     def test_corriger_une_fiche_validee_refuse_rg11(self, base_workflow: dict, client: TestClient) -> None:
         assert client.post(
-            "/fiches/7792-SO/valider",
-            json={"utilisateur": "alice", "revision": _revision(base_workflow, "7792-SO")},
+            "/fiches/1042-EX/valider",
+            json={"utilisateur": "alice", "revision": _revision(base_workflow, "1042-EX")},
         ).status_code == 200
         reponse = client.post(
-            "/fiches/7792-SO/corriger",
+            "/fiches/1042-EX/corriger",
             json={
                 "champ": "fiche.designation",
                 "valeur": "x",
                 "utilisateur": "carole",
-                "revision": _revision(base_workflow, "7792-SO"),
+                "revision": _revision(base_workflow, "1042-EX"),
             },
         )
         assert reponse.status_code == 409 and "RG11" in reponse.json()["detail"]
@@ -266,12 +355,12 @@ class TestCorrectionEtJournal:
         from seamtech_search.fiches import depot
 
         reponse = client.post(
-            "/fiches/7792-SO/rouvrir",
+            "/fiches/1042-EX/rouvrir",
             json={
                 "utilisateur": "bob",
                 "effacer_corrections": True,
                 "commentaire": "arbitrage : corrections abandonnées",
-                "revision": _revision(base_workflow, "7792-SO"),
+                "revision": _revision(base_workflow, "1042-EX"),
             },
         )
         assert reponse.status_code == 200 and reponse.json()["corrections_effacees"] is True
@@ -280,7 +369,7 @@ class TestCorrectionEtJournal:
                 cursor.execute(
                     "SELECT COUNT(*) FROM fiche_champ_extrait c JOIN fiche f ON f.id_fiche = c.id_fiche "
                     "WHERE f.code = %s AND c.corrige",
-                    ("7792-SO",),
+                    ("1042-EX",),
                 )
                 assert int(cursor.fetchone()[0]) == 0
         # la ré-extraction redevient possible (remplacement sur place, id conservé)
@@ -309,7 +398,7 @@ class TestFileDeValidation:
         reponse = client.get("/validation/file", params={"gabarit": "FICHE_PORTANT_V1"})
         assert reponse.status_code == 200
         assert all(f["gabarit"] == "FICHE_PORTANT_V1" for f in reponse.json())
-        assert reponse.json(), "la fiche 7792-SO (portant) doit être dans la file filtrée"
+        assert reponse.json(), "la fiche 1042-EX (portant) doit être dans la file filtrée"
         reponse = client.get("/validation/file", params={"gabarit": "INCONNU"})
         assert reponse.status_code == 200 and reponse.json() == []
 
@@ -396,11 +485,11 @@ class TestListeEtPieces:
         assert reponse.status_code == 200
         corps = reponse.json()
         codes = {f["code"] for f in corps["fiches"]}
-        assert {"7792-SO", "0901-MM"} <= codes
+        assert {"1042-EX", "0901-MM"} <= codes
         assert corps["facettes"].get("a_valider", 0) >= 1
         assert corps["total"] == len(corps["fiches"]) or corps["total"] >= 2
-        portant = next(f for f in corps["fiches"] if f["code"] == "7792-SO")
-        assert portant["gabarit"] == "FICHE_PORTANT_V1" and portant["client"] == "Sailonet"
+        portant = next(f for f in corps["fiches"] if f["code"] == "1042-EX")
+        assert portant["gabarit"] == "FICHE_PORTANT_V1" and portant["client"] == "Exemplia"
         # filtre par statut
         reponse = client.get("/fiches", params={"statut": "inexistant"})
         assert reponse.status_code == 200 and reponse.json()["fiches"] == []
@@ -415,6 +504,12 @@ class TestListeEtPieces:
         que sous forme de badge sur l'écran de validation.
         """
         index = base_workflow["index"]
+        # Contrat : une fiche sans anomalie renvoie une LISTE VIDE, jamais
+        # l'absence de clé. Vérifié AVANT toute insertion manuelle, sur la
+        # fiche génois : son dossier « CLIENT-GENOA » ne porte aucune
+        # référence exploitable (le Lot 1.3 n'a donc rien à comparer) et ses
+        # cotes canonisées ne lèvent aucun contrôle RG16.
+        assert client.get("/fiches/0901-MM").json()["anomalies"] == []
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
                 cursor.execute("SELECT id_fiche FROM fiche WHERE code = %s", ("0901-MM",))
@@ -429,8 +524,19 @@ class TestListeEtPieces:
         assert [a["code"] for a in corps["anomalies"]] == ["champ_manquant"]
         assert corps["anomalies"][0]["message"].startswith("Cotes absentes")
         assert corps["anomalies"][0]["statut"] == "a_traiter"
-        # Une fiche sans anomalie renvoie une liste vide, jamais l'absence de clé.
-        assert client.get("/fiches/7792-SO").json()["anomalies"] == []
+        # Lot 1.3 : la fiche 1042-EX a été RÉ-DÉPOSÉE plus haut depuis le
+        # dossier « AFFAIRE-RG11-2 », dont la référence « RG11 » ne concorde
+        # pas avec le document « 1042-EX ». L'anomalie est donc LÉGITIME — et
+        # elle prouve au passage que l'écran de détail expose bien les
+        # anomalies produites par le Lot 1, pas seulement celles saisies à la
+        # main. Non bloquante : la fiche est bien là, en « a_traiter ».
+        anomalies_portant = client.get("/fiches/1042-EX").json()["anomalies"]
+        codes_portant = [a["code"] for a in anomalies_portant]
+        assert "reference_discordante" in codes_portant
+        discordance = next(a for a in anomalies_portant if a["code"] == "reference_discordante")
+        assert "RG11" in discordance["message"] and "1042-EX" in discordance["message"]
+        assert discordance["statut"] == "a_traiter"
+        assert isinstance(anomalies_portant, list)
 
     def test_pieces_jointes_avec_description_documents(self, base_workflow: dict, client: TestClient) -> None:
         """RG12 : la pièce déposée apparaît ici avec sa référence catalogue."""
@@ -438,10 +544,10 @@ class TestListeEtPieces:
 
         dossier = base_workflow["racine_essai"] / "CLIENT-PIECE"
         dossier.mkdir(parents=True, exist_ok=True)
-        (dossier / "fiche.pdf").write_bytes((RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf").read_bytes())
+        (dossier / "fiche.pdf").write_bytes((RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf").read_bytes())
         (dossier / "croquis-voile.pdf").write_bytes(b"%PDF-1.4 croquis")
         depot.deposer_dossier(base_workflow["index"], dossier)
-        reponse = client.get("/fiches/7792-SO/pieces")
+        reponse = client.get("/fiches/1042-EX/pieces")
         assert reponse.status_code == 200
         corps_pieces = reponse.json()
         assert corps_pieces["fichier_source"] is None and corps_pieces["pdf_source"] is None
@@ -466,11 +572,11 @@ class TestListeEtPieces:
 
         dossier = base_workflow["racine_essai"] / "CLIENT-LOT-SEUl"
         dossier.mkdir(parents=True, exist_ok=True)
-        (dossier / "fiche.pdf").write_bytes((RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf").read_bytes())
+        (dossier / "fiche.pdf").write_bytes((RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf").read_bytes())
         depot.deposer_dossier(base_workflow["index"], dossier)
 
         corps = client.get("/fiches", params={"taille": 200}).json()
-        portant = next(f for f in corps["fiches"] if f["code"] == "7792-SO")
+        portant = next(f for f in corps["fiches"] if f["code"] == "1042-EX")
         assert portant["nb_fichiers"] >= 1 and portant["a_pdf"] is True
         assert portant["gabarit"], "un dossier déposé garde sa provenance (gabarit)"
 

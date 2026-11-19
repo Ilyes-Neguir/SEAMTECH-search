@@ -543,6 +543,14 @@ def recover_stale_jobs(
 
 STATUTS_ACTIFS = ("pending", "running")
 STATUTS_TERMINAUX = ("completed", "failed", "cancelled", "upload_incomplete", "needs_review")
+# Terminaux pour lesquels une nouvelle livraison du même message n'a RIEN à
+# refaire : elle est un doublon, acquittée sans être retraitée.
+# ``upload_incomplete`` en est exclu bien qu'il soit terminal : ce n'est pas un
+# état « rien à faire », c'est un envoi resté en cours qui ATTEND sa reprise.
+# Le traiter en doublon abandonnerait des objets jamais envoyés — la preuve est
+# dans tests/test_snapshot_import.py, où un job ``upload_incomplete`` est
+# redélivré et DOIT produire un envoi supplémentaire.
+STATUTS_DEJA_TRAITES = tuple(statut for statut in STATUTS_TERMINAUX if statut != "upload_incomplete")
 
 
 def acquerir_claim_job(index: SearchIndex, job_id: str, worker_id: str) -> bool:

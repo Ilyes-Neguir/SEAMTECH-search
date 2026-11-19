@@ -92,8 +92,8 @@ def archive(tmp_path: Path) -> Path:
     """Archive synthétique : 2 fiches (même gabarit), 1 plan + sa copie, 1 scan, 1 xlsx, 1 txt."""
     racine = tmp_path / "archive"
     make_pdf(
-        racine / "2024" / "CLIENT-A" / "fiche-7792.pdf",
-        [ligne.format(reference="REF-7792-SO", quantite=1, grammage=903, longueur="6,60", largeur="3,08") for ligne in FICHE_LABELS],
+        racine / "2024" / "CLIENT-A" / "fiche-1042-EX.pdf",
+        [ligne.format(reference="REF-1042-EX", quantite=1, grammage=903, longueur="6,60", largeur="3,08") for ligne in FICHE_LABELS],
     )
     make_pdf(
         racine / "2025" / "CLIENT-B" / "fiche-8842.pdf",
@@ -245,7 +245,7 @@ def test_familles_de_gabarits(archive: Path, tmp_path: Path) -> None:
     assert famille["empreintes_fines_distinctes"] == 1, "mêmes libellés aux mêmes positions"
     assert {"cotes", "mesures", "finies", "longueur", "largeur"} <= set(famille["libelles_communs"])
     noms = {Path(exemple).name for exemple in famille["exemples"]}
-    assert noms == {"fiche-7792.pdf", "fiche-8842.pdf"}
+    assert noms == {"fiche-1042-EX.pdf", "fiche-8842.pdf"}
 
 
 def test_determinisme_deux_executions(archive: Path, tmp_path: Path) -> None:
@@ -277,7 +277,7 @@ def test_csv_fichiers_couvre_tout(archive: Path, tmp_path: Path) -> None:
     assert len(lignes) == 7
     par_nom = {Path(ligne["chemin"]).name: ligne for ligne in lignes}
     assert par_nom["scan-ancien.pdf"]["categorie_pdf"] == "scan_probable"
-    assert par_nom["fiche-7792.pdf"]["categorie_pdf"] == "technique"
+    assert par_nom["fiche-1042-EX.pdf"]["categorie_pdf"] == "technique"
     assert par_nom["plan-coupe.pdf"]["categorie_pdf"] == "plan"
     assert par_nom["nomenclature.xlsx"]["categorie_pdf"] == ""
     assert int(par_nom["plan-coupe.pdf"]["groupe_doublon"]) > 0
@@ -293,7 +293,7 @@ def mot(texte: str, x: float, y: float) -> dict[str, Any]:
 
 
 def test_empreinte_gabarit_ignore_les_valeurs_numeriques() -> None:
-    mots_a = [mot("Référence", 50, 700), mot("REF-7792-SO", 200, 700), mot("Quantité", 50, 680), mot("Longueur", 50, 660)]
+    mots_a = [mot("Référence", 50, 700), mot("REF-1042-EX", 200, 700), mot("Quantité", 50, 680), mot("Longueur", 50, 660)]
     mots_b = [mot("Référence", 50, 700), mot("REF-9911-ZZ", 200, 700), mot("Quantité", 50, 680), mot("Longueur", 50, 660)]
 
     empreinte_a = inventory.empreinte_gabarit(mots_a)
@@ -302,11 +302,11 @@ def test_empreinte_gabarit_ignore_les_valeurs_numeriques() -> None:
     assert empreinte_a is not None and empreinte_b is not None
     assert empreinte_a["cle_famille"] == empreinte_b["cle_famille"]
     assert empreinte_a["empreinte_fine"] == empreinte_b["empreinte_fine"]
-    assert "ref-7792-so" not in empreinte_a["libelles"]
+    assert "ref-1042-so" not in empreinte_a["libelles"]
 
 
 def test_empreinte_gabarit_sans_mots_alphabetiques() -> None:
-    assert inventory.empreinte_gabarit([mot("7792", 50, 700), mot("6,60", 200, 700)]) is None
+    assert inventory.empreinte_gabarit([mot("1042", 50, 700), mot("6,60", 200, 700)]) is None
     assert inventory.empreinte_gabarit([]) is None
 
 

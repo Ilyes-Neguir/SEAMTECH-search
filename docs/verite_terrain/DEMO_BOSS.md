@@ -36,7 +36,7 @@ l'ACTION EXACTE, l'ÉCRAN ATTENDU et la phrase à dire. Chrono indicatif.
 
 | | |
 |---|---|
-| **Action** | Menu **Nouveau** → saisir (ou parcourir) le chemin du dossier réel du jour, ex. `C:\SEAMTECH\2026\DAMIER 4 - 250821JA` → **Déposer**. |
+| **Action** | Menu **Nouveau** → saisir (ou parcourir) le chemin du dossier réel du jour, ex. `C:\SEAMTECH\2026\DAMIER 4 - 250106AB` → **Déposer**. |
 | **Écran attendu** | Écran « Nouveau dossier » : le dépôt répond avec un **numéro de lot** ; la fiche extraite s'affiche (statut **« Non vérifiée »**/`a_valider`) et le **suivi du lot** se met à jour en direct : progression, dossiers traités, éventuelles échecs avec RAISSON écrite (jamais d'échec silencieux). |
 | **À dire** | « La fiche est extraite tout de suite, jamais validée d'office — elle est proposée, pas décidée. Le lot suit chaque dossier : ce qui rate dit pourquoi. » |
 

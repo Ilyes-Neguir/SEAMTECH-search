@@ -6,7 +6,7 @@ dépôt : tout PDF, ZIP ou format machine (``.plx``/``.xin``/``.dxf``/``.db``)
 nouvellement suivi par Git — ou modifié — rend ce test ROUGE.
 
 Pourquoi : le dépôt a déjà contenu des documents clients réels (la fiche
-7792-SO, les 7 ZIP de dossiers atelier). Le commanditaire exige qu'aucun
+1042-EX, les 7 ZIP de dossiers atelier). Le commanditaire exige qu'aucun
 document réel ne soit ajouté au dépôt sans décision explicite. Ce test fait
 de l'ajout un acte CONSCIENT : pour légitimer un nouveau fichier, il faut
 l'ajouter à l'inventaire épinglé ci-dessous avec son SHA-256 mesuré — et un
@@ -19,7 +19,7 @@ Règles :
 - aucun format machine (.plx, .xin, .dxf, .db) ne doit être suivi PAR Git :
   ces fichiers n'existent que DANS les ZIP du corpus, jamais en vrac ;
 - aucun PDF ne doit être suivi à la racine du dépôt ; la copie canonique
-  7792-SO demeure épinglée sous ``sample_data/``.
+  1042-EX demeure épinglée sous ``sample_data/``.
 - les PDF du répertoire ``tests/fixtures/ocr/`` sont des données SYNTHÉTIQUES
   régénérables explicitement autorisées ; leurs octets ne sont pas épinglés,
   car les métadonnées PDF diffèrent selon les versions de reportlab.
@@ -38,16 +38,14 @@ REPO = Path(__file__).resolve().parent.parent
 # Inventaire épinglé : (chemin relatif, sha256, taille en octets).
 # Tout est SYNTHÉTIQUE sauf mention contraire explicite.
 INVENTAIRE_EPINGLE: tuple[tuple[str, str, int], ...] = (
-    # --- Fiche client RÉELLE 7792-SO (reçue du commanditaire 21/09, vérité
-    # --- terrain 74/74 — cf. docs/verite_terrain/EMPREINTES.md). Les 7 ZIP
-    # --- réels du corpus 2026-09-28 sont épinglés eux aussi : tant que le
-    # --- commanditaire n'a pas décidé de les retirer/purger, toute
-    # --- modification de l'un d'eux doit être explicite.
-    (
-        "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf",
-        "43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40",
-        166_990,
-    ),
+    # --- Fiche de référence : désormais SYNTHÉTIQUE et RÉGÉNÉRABLE, produite
+    # --- par scripts/generer_fiche_reference_synthetique.py. Elle n'est donc
+    # --- PAS épinglée ici (une régénération légalement différente casserait
+    # --- l'empreinte) : elle est déclarée dans _FIXTURES_SYNTHETIQUES et
+    # --- consommée par les 74 cibles de vérité terrain.
+    # --- Les 7 ZIP de dossiers atelier du corpus 2026-09-28 ont été PURGÉS
+    # --- (décision du commanditaire) — cf.
+    # --- docs/PURGE_DONNEES_CLIENTS_2026-11-17.md.
     # --- Fixtures SYNTHÉTIQUES ---
     (
         "sample_data/CLIENT-123/fiche-technique.pdf",
@@ -64,51 +62,15 @@ INVENTAIRE_EPINGLE: tuple[tuple[str, str, int], ...] = (
         "c250b0771b0ac7b8a6a949ec9dc250aae703b9e6338472b19e558d478f5076ac",
         1_589,
     ),
-    # --- Corpus réel 2026-09-28 : 7 dossiers atelier (ZIP) ---
-    (
-        "AQUILA 250216AJA-20260928T182324Z-1-001.zip",
-        "fd1fca0930494328687ecf5d6905af139c24f93a8b9e2e51b2f6075772446be6",
-        573_860,
-    ),
-    (
-        "ATTALIA 250121JA-20260928T182325Z-1-001.zip",
-        "a71ec77d6d5abf3c55f5ca8aa5c79d3347d3b3765b91f54950065b9c2161d699",
-        594_852,
-    ),
-    (
-        "BAVARIA 32 - 250604JA-20260928T182326Z-1-001.zip",
-        "a9ca298cae78ccbacfaab69260cede299062ef0d20e0a7fba62c3539ac3a538f",
-        745_910,
-    ),
-    (
-        "BAVARIA 34 - 250323JA-20260928T182327Z-1-001.zip",
-        "483f89716b953734315b7bbb4ba81050dc24b33a162e2a2623604eee268b8f6f",
-        618_247,
-    ),
-    (
-        "DAMIEN 4 - 250821JA-20260928T182330Z-1-001.zip",
-        "2f1ecb0205b817c3dbdb324bf444aad9fb5ddce1d3f415859698fbb21fb428bf",
-        846_621,
-    ),
-    (
-        "DEHLER 39 - 250329AJA-20260928T182330Z-1-001.zip",
-        "b3171d070f6b332366263626a665e7f7985bb8406062c2957895401850df6a06",
-        919_707,
-    ),
-    (
-        "GIB SEA 284 - 250328AJA-20260928T182331Z-1-001.zip",
-        "103359b561ef32f5a8ce04b373864c26a0b496156efc1f728e75f0c0911b4aa3",
-        581_169,
-    ),
 )
 
 # Les trois entrées suivantes conservent les anciens nodeid de la suite.
 # Leur contrat a été migré sans perdre leur identité de collecte : le doublon
-# racine doit être absent (la copie canonique garde l'empreinte), et les fixtures
-# OCR sont validées par structure/contenu, pas par octets non déterministes.
+# racine d'un document client purgé doit rester absent, et les fixtures OCR
+# sont validées par structure/contenu, pas par octets non déterministes.
 _ANCIENS_NODEID_INVENTAIRE: tuple[tuple[str, str, int], ...] = (
     (
-        "7792-SO_ffab.pdf",
+        "1042-EX_ffab.pdf",
         "43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40",
         166_990,
     ),
@@ -152,6 +114,21 @@ def _fichiers_suivis() -> list[str]:
 _FIXTURES_SYNTHETIQUES = (
     "tests/fixtures/ocr/",
     "tests/fixtures/pdf_rotation/",
+    # Fiche de référence de vérité terrain : régénérée par
+    # scripts/generer_fiche_reference_synthetique.py. Générateur versionné, et
+    # contenu verrouillé par une autre voie que l'empreinte : les 74 cibles de
+    # seamtech_search/fiches/verite_reference.py, relues à 100 % par
+    # tests/test_extraction_fiche_reference.py. Changer le générateur casse
+    # ce test — la nature du document est donc bien surveillée.
+    "sample_data/CLIENT-1042-EX/",
+    # Corpus de repli de la recette locale : les 7 archives du corpus REEL ont
+    # ete purgees, la recette se rabat sur ces affaires synthetiques. Genere
+    # par scripts/generer_corpus_recette_synthetique.py, et verrouille sans
+    # empreinte — donc sans se casser a chaque regeneration — par
+    # tests/test_recette_locale.py : trois affaires minimum, PDF distincts
+    # (sinon la deduplication les fondrait en une seule), et un code extrait
+    # distinct par affaire. La nature du document est donc bien surveillee.
+    "sample_data/recette/",
 )
 
 
@@ -200,12 +177,12 @@ def test_aucun_format_machine_en_vrac() -> None:
 def test_empreinte_document_epingle(chemin_relatif: str, sha256_attendu: str, taille_attendue: int) -> None:
     """Épingle les documents; les anciens nodeid vérifient explicitement leur migration."""
     chemin = REPO / chemin_relatif
-    if chemin_relatif == "7792-SO_ffab.pdf":
+    if chemin_relatif == "1042-EX_ffab.pdf":
+        # Ancien doublon racine d'un document client aujourd'hui purgé : il
+        # doit rester absent. On ne compare PLUS ses octets à la copie
+        # canonique : celle-ci est désormais synthétique et régénérable, elle
+        # n'a donc plus d'empreinte stable à opposer.
         assert not chemin.exists(), "l'ancien doublon PDF à la racine doit rester retiré"
-        canonique = REPO / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
-        contenu = canonique.read_bytes()
-        assert len(contenu) == taille_attendue
-        assert hashlib.sha256(contenu).hexdigest() == sha256_attendu
         return
     if chemin_relatif.startswith("tests/fixtures/ocr/"):
         # Compatibilité des anciens nodeid sans imposer le SHA/taille du PDF :
@@ -229,13 +206,13 @@ def test_empreinte_document_epingle(chemin_relatif: str, sha256_attendu: str, ta
     )
 
 
-def test_doublon_racine_7792_identique_a_la_copie_canonique() -> None:
+def test_doublon_racine_reference_identique_a_la_copie_canonique() -> None:
     """Ancien garde conservé : si le doublon existe, il doit être identique; le garde suivant exige son absence."""
-    racine = REPO / "7792-SO_ffab.pdf"
-    canonique = REPO / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+    racine = REPO / "1042-EX_ffab.pdf"
+    canonique = REPO / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
     if racine.is_file():
         assert racine.read_bytes() == canonique.read_bytes(), (
-            "Le PDF racine 7792-SO_ffab.pdf diffère de la copie canonique de "
+            "Le PDF racine 1042-EX_ffab.pdf diffère de la copie canonique de "
             "sample_data/ — un document réel ne doit jamais être modifié."
         )
 
@@ -246,9 +223,9 @@ def test_aucun_pdf_a_la_racine_du_depot() -> None:
     assert not pdf_racine, f"PDF interdit(s) à la racine du dépôt : {pdf_racine}"
 
 
-def test_ancien_doublon_racine_7792_reste_absent() -> None:
+def test_ancien_doublon_racine_reference_reste_absent() -> None:
     """Vérifie nommément le retrait du doublon public documenté dans FUSION_MAIN."""
-    assert not (REPO / "7792-SO_ffab.pdf").exists()
+    assert not (REPO / "1042-EX_ffab.pdf").exists()
 
 
 @pytest.mark.parametrize("nom", ["ocr_degrade.pdf", "ocr_propre.pdf"])

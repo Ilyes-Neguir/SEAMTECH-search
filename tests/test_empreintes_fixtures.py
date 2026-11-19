@@ -2,12 +2,20 @@
 
 Le bac à sable s'est réinitialisé entre deux tours et un commit orphelin
 (108 fichiers recréés, dont deux fixtures PDF ALTÉRÉES par la restauration)
-a failli être poussé. Ces empreintes épinglent les quatre documents du dépôt :
-une fixture restaurée de travers, modifiée ou remplacée rend ce test ROUGE —
-exactement le scénario qui a failli se produire.
+a failli être poussé. Ces empreintes épinglent les documents du dépôt : une fixture restaurée de
+travers, modifiée ou remplacée rend ce test ROUGE — exactement le scénario
+qui a failli se produire.
 
 Empreintes mesurées sur la tête 64e090c (sha256sum), jamais inventées :
 elles ont été vérifiées contradictoirement par l'audit indépendant du 22/09.
+
+ La fiche de référence n'est PLUS épinglée ici : elle est désormais
+ SYNTHÉTIQUE et régénérée par ``scripts/generer_fiche_reference_synthetique.py``,
+ et ReportLab écrit des métadonnées variables — une empreinte y serait
+ instable par construction. Sa garde n'est donc plus une empreinte mais une
+ PREUVE D'USAGE : ``test_la_fiche_de_reference_se_regenerere_74_sur_74``, qui
+ la régénère dans un dossier jetable et relit les 74 cibles. Une altération
+ du générateur casse cette preuve au lieu de casser une empreinte.
 """
 
 from __future__ import annotations
@@ -21,13 +29,10 @@ REPO = Path(__file__).resolve().parent.parent
 
 # (chemin relatif, sha256 complet, taille en octets)
 EMPREINTES: tuple[tuple[str, str, int], ...] = (
-    # La VRAIE fiche client 7792-SO (copie canonique ; le doublon à la racine
-    # a été retiré de l'arbre courant le 29/09/2026, voir EMPREINTES.md).
-    (
-        "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf",
-        "43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40",
-        166_990,
-    ),
+    # La fiche de référence (sample_data/CLIENT-1042-EX/) est volontairement
+    # ABSENTE de cette liste : synthétique et régénérable, elle n'a pas
+    # d'empreinte stable. Garde équivalente par la preuve d'usage, voir le
+    # module.
     # Gabarit génois : fixture SYNTHÉTIQUE (documenté comme tel — jamais
     # réglé/déclaré sur la reconstruction).
     (

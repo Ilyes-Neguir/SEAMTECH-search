@@ -21,9 +21,9 @@ Mesures du 22/09/2026 UTC, sorties brutes en §4 (commande puis sortie ;
 - **12 PR ouvertes**, #9 à #20 : **11 contenues (#10 à #20)** ; #9 hors chaîne.
   Dans `tests/test_reindex_skip.py`, la différence #9/pile est uniquement un
   commentaire ; `os.path.normcase` est présent ligne 51. Ne pas fusionner ces PR.
-- Le seul fichier de `main` absent de la pile est **7792-SO_ffab.pdf**,
+- Le seul fichier de `main` absent de la pile est **1042-EX_ffab.pdf**,
   **166 990 octets**. Son maintien après fusion est **attendu**. Empreinte identique
-  à `sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf` (preuve en §4).
+  à `sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf` (preuve en §4).
 - Dépôt **public** (`isPrivate: false`) : les deux copies du document client
   sont publiques. Supprimer ultérieurement une copie ne retire pas son historique.
 - Piège confirmé séparément : fusionner **lot-d seul** laisse `.github` absent.
@@ -209,15 +209,15 @@ $ git show origin/main:CHANGELOG.md | grep '^## '
 ## 0.1.0 — Init
 EXIT=0
 $ bash -c 'comm -23 <(git ls-tree -r --name-only origin/main | sort) <(git ls-tree -r --name-only origin/arena/01a0c56d-seamtech-search | sort)'
-7792-SO_ffab.pdf
+1042-EX_ffab.pdf
 EXIT=0
-$ git cat-file -s origin/main:7792-SO_ffab.pdf
+$ git cat-file -s origin/main:1042-EX_ffab.pdf
 166990
 EXIT=0
-$ git show origin/main:7792-SO_ffab.pdf | sha256sum
+$ git show origin/main:1042-EX_ffab.pdf | sha256sum
 43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40  -
 EXIT=0
-$ git show origin/arena/01a0c56d-seamtech-search:sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf | sha256sum
+$ git show origin/arena/01a0c56d-seamtech-search:sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf | sha256sum
 43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40  -
 EXIT=0
 $ git diff origin/fix/test-normcase-basetemp origin/arena/01a0c56d-seamtech-search -- tests/test_reindex_skip.py
@@ -310,9 +310,9 @@ $ diff -u <(git show origin/main:CHANGELOG.md) <(sed -n '/^## 0.5.0 /,$p' CHANGE
  
  Audited commit `b7be72a` had data-loss, security, and doc-honesty defects. This release fixes them in audit order, verified by `ruff check . && pytest -k "not postgres and not s3"`.
 EXIT=1
-$ sha256sum 7792-SO_ffab.pdf sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf
-43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40  7792-SO_ffab.pdf
-43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40  sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf
+$ sha256sum 1042-EX_ffab.pdf sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf
+43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40  1042-EX_ffab.pdf
+43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40  sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf
 EXIT=0
 $ git -c user.name="Repetition locale" -c user.email="repetition@example.invalid" commit -m "Essai local uniquement : consolidation fc4f99e"
 [detached HEAD 0055a91] Essai local uniquement : consolidation fc4f99e
@@ -397,4 +397,4 @@ ne doit être déduite des commandes préparées dans ce document.
 
 ## Addendum du 2026-09-29 — doublon racine retiré
 
-L'état décrit dans ce runbook est une photographie historique du 22/09/2026. Depuis, le doublon racine `7792-SO_ffab.pdf` a été retiré de l'arbre de travail : le test OCR lit désormais la copie canonique `sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf`. SHA mesuré avant retrait : les deux copies valaient `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40`. Ce retrait ne supprime pas le blob de l'historique Git ni les copies déjà clonées. Le dépôt reste public, conformément à la décision du commanditaire ; aucune nouvelle demande de changement de visibilité n'est lancée. La garde de confidentialité exige désormais qu'aucun PDF ne soit à la racine.
+L'état décrit dans ce runbook est une photographie historique du 22/09/2026. Depuis, le doublon racine `1042-EX_ffab.pdf` a été retiré de l'arbre de travail : le test OCR lit désormais la copie canonique `sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf`. SHA mesuré avant retrait : les deux copies valaient `43afc51e55ae598d3eaffc3096f0e7ddaa00e8ddc579ae315bb31b4dbf1c1f40`. Ce retrait ne supprime pas le blob de l'historique Git ni les copies déjà clonées. Le dépôt reste public, conformément à la décision du commanditaire ; aucune nouvelle demande de changement de visibilité n'est lancée. La garde de confidentialité exige désormais qu'aucun PDF ne soit à la racine.

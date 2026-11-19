@@ -49,12 +49,36 @@ def _est_decor(ligne: str) -> bool:
 
 
 def _cause(texte: str | None, message: str | None, *, longueur_max: int = 240) -> str:
-    """La cause d'un échec : la DERNIÈRE ligne « E » utile de la trace, à défaut le message."""
+    """La cause d'un échec : la DERNIÈRE ligne « E » utile de la trace, à défaut le message.
+
+    Précision qui coûte cher si on l'ignore — et qui l'a été. Quand une
+    assertion porte un message (``assert x == 0, err``), pytest écrit le message
+    PUIS, sur la dernière ligne, l'assertion nue :
+
+        E   AssertionError: Traceback (most recent call last):
+        E     File "...", line 42, in <module>
+        E   SauvegardeError: Restauration locale sûre indisponible sur cette plateforme
+        E   assert 1 == 0
+
+    La DERNIÈRE ligne est donc la moins disante des quatre : c'est l'assertion,
+    qui ne dit rien de la cause, alors que le message la porte. Prendre
+    ``utiles[-1]`` jetait systématiquement l'information utile — d'où des causes
+    publiées réduites à « assert 1 == 0 », et un diagnostic Windows resté
+    aveugle pendant deux lots.
+
+    On préfère donc la dernière ligne qui n'est PAS une assertion nue, et l'on
+    ne retombe sur l'assertion que lorsqu'elle est tout ce dont on dispose
+    (``assert 'c:\\…' == 'C:\\…'`` reste parfaitement disant).
+    """
     lignes = [ligne[2:].strip() for ligne in (texte or "").splitlines() if ligne.startswith("E ")]
     utiles = [ligne for ligne in lignes if ligne[:1] not in _MARQUEURS_PYTEST and not _est_decor(ligne)]
     brut = ""
     if utiles:
-        brut = utiles[-1]
+        # Une assertion nue (« assert … ») ne résume pas un message : elle le
+        # suit. La dernière ligne NON assert est la cause ; l'assertion sert de
+        # repli quand elle est seule en piste.
+        informatives = [ligne for ligne in utiles if not ligne.startswith("assert ")]
+        brut = (informatives or utiles)[-1]
     elif lignes:
         brut = lignes[0]
     else:

@@ -1,11 +1,15 @@
-"""Écriture en base d'une fiche extraite (Lot B — plan v3.0 §10, §13, RG3/RG11).
+"""Écriture en base d'une fiche extraite (Lot B — plan v3.0 §10, §13, RG11).
 
 Règles appliquées ici, toutes testées :
 - **Transaction unique** : fiche, cotes, matériaux, galons, jonctions,
   finitions, options, renforts, champs extraits, mesures libres et anomalies
   sont écrits dans UNE transaction — tout ou rien.
-- **RG3** : le statut d'arrivée est TOUJOURS ``a_valider`` ; aucun chemin de
-  ce module ne peut écrire ``valide`` (c'est l'affaire de l'opérateur).
+- **Statut d'arrivée** : décidé par ``auto_validation.decider_statut_arrivee``.
+  L'ancienne règle **RG3** (« le dépôt ne valide jamais ») est REMPLACÉE
+  depuis la décision du commanditaire du 2026-11-14 : un score strictement
+  supérieur à 90 % sans anomalie bloquante ⇒ la fiche arrive ``valide``.
+  La décision est prise APRÈS les contrôles RG16, seule règle qui a toutes
+  ses données — voir le commentaire à l'endroit de son application.
 - **RG11 (idempotence)** : rejouer une extraction sur un PDF déjà importé ne
   duplique rien — la fiche ``a_valider`` est remplacée à l'identique près ;
   et n'écrase JAMAIS une fiche déjà validée par un humain.
@@ -35,8 +39,15 @@ from seamtech_search.extractions_voile import (
     enregistrer_extraction_voile_curseur,
 )
 from seamtech_search.fiches import normalisation as norm
+from seamtech_search.fiches.anomalies import CODES_BLOQUANTS, ReferencesConstatees, appliquer_controles_rg16
+from seamtech_search.fiches.auto_validation import (
+    STATUT_ATTENTE_HUMAINE,
+    STATUT_AUTO_VALIDE,
+    decider_statut_arrivee,
+)
+from seamtech_search.fiches.gabarits import GabaritDef
 from seamtech_search.fiches.modeles import FicheExtraite
-from seamtech_search.fiches.verite_7792 import VERITE_7792, VERITE_7792_COMPLETE
+from seamtech_search.fiches.verite_reference import VERITE_REFERENCE, VERITE_REFERENCE_COMPLETE
 from seamtech_search.referentiel_bateaux import lier_bateau_au_modele
 
 LOGGER = logging.getLogger("seamtech_search.fiches.persistance")
@@ -52,7 +63,11 @@ SEUIL_GABARIT_TEST = 0.90
 # le remplacement la supprimait, ou bien une validation passait sur un contenu
 # qui venait de changer. Une correction concurrente attend désormais la fin du
 # remplacement, puis échoue sur le contrôle de révision (409).
-_SQL_EXISTE_FICHE = "SELECT id_fiche, statut, revision FROM fiche WHERE code = %s FOR UPDATE"
+# Lot 19 : la quatrième colonne (`id_type_voile`) est lue pour pouvoir le CONSERVER
+# quand la ré-extraction n'en apporte aucun — voir la fusion plus bas.
+_SQL_EXISTE_FICHE = (
+    "SELECT id_fiche, statut, revision, id_type_voile FROM fiche WHERE code = %s FOR UPDATE"
+)
 _SQL_LIRE_STATUT = "SELECT statut FROM fiche WHERE id_fiche = %s"
 _SQL_SUPPRIMER_FICHE = "DELETE FROM fiche WHERE id_fiche = %s"
 # Remplacement SUR PLACE (décision revue 21/09 — « deux dossiers, la même fiche ») :
@@ -164,6 +179,23 @@ _SQL_CHAMP_INS = (
     "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
 )
 _SQL_ANOMALIE_INS = "INSERT INTO fiche_anomalie (id_fiche, code, gravite, message) VALUES (%s, %s, %s, %s)"
+
+# Promotion à « valide » et trace d'audit correspondante. Le statut
+# d'arrivée est décidé UNE SEULE FOIS, par `decider_statut_arrivee`
+# (module `auto_validation`), et appliqué plus bas — voir pourquoi à
+# l'endroit de l'application de la règle.
+_SQL_PROMOUVOIR_AUTO = "UPDATE fiche SET statut = %s WHERE id_fiche = %s AND statut = %s"
+# `id_utilisateur` est VOLONTAIREMENT NULL : une auto-validation n'a pas
+# d'acteur humain. Lui inventer un compte ferait croire à une décision
+# attribuable — c'est ce que la traçabilité (§10.1, item I2) interdit.
+# L'absence d'acteur est DITE dans le commentaire, pas masquée. La
+# colonne accepte NULL (REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL).
+_SQL_JOURNAL_AUTO_VALIDATION = (
+    "INSERT INTO fiche_validation "
+    "(id_fiche, id_utilisateur, action, etat_avant, etat_apres, commentaire) "
+    "VALUES (%s, NULL, %s, %s, %s, %s)"
+)
+_ACTION_JOURNAL_AUTO_VALIDATION = "auto_valider"
 _SQL_GABARIT_TEST_INS = (
     "INSERT INTO gabarit_test (code_gabarit, version_gabarit, nom_fichier, empreinte_pdf, attendu, notes) "
     "VALUES (%s, %s, %s, %s, %s, %s) "
@@ -281,6 +313,17 @@ def routage(fiche: FicheExtraite, seuils: dict[str, float] | None = None) -> dic
         return {"voie": "reprise_complete", "motif": "orientations PDF mixtes", "champs_sous_seuil": []}
     if any(anomalie.code == "orientation_pdf_non_verifiee" for anomalie in fiche.anomalies):
         return {"voie": "reprise_complete", "motif": "orientation PDF non vérifiée", "champs_sous_seuil": []}
+    # Lot 1.4 : une anomalie BLOQUANTE envoie en revue, elle n'est pas
+    # simplement relue. C'est la différence avec « reference_discordante »
+    # (Lot 1.3), non bloquante : le dossier entre en base et l'anomalie
+    # l'accompagne. Ce qui bloque est défini une seule fois, dans
+    # `anomalies.CODES_BLOQUANTS` — pas recopié ici.
+    if CODES_BLOQUANTS.intersection(anomalie.code for anomalie in fiche.anomalies):
+        return {
+            "voie": "reprise_complete",
+            "motif": "champ obligatoire manquant : revue",
+            "champs_sous_seuil": [],
+        }
     sous_seuil = [
         {"champ": champ.champ, "confiance": champ.confiance, "seuil": seuils.get(famille_du_champ(champ.champ), 0.9)}
         for champ in fiche.tous_les_champs()
@@ -367,6 +410,18 @@ class ErreurVerrouRG11(ValueError):
     écrasée par une ré-extraction — le dépôt liste le dossier en échec."""
 
 
+class ErreurEffacementAxe(ValueError):
+    """Lot 19 : une réécriture ne peut pas faire passer un axe MESURÉ à NULL.
+
+    Ce n'est normalement pas atteignable — la fusion conserve la valeur — et
+    c'est tout l'intérêt : si un refactorissement réintroduit l'effacement,
+    l'import échoue ici, bruyamment, au lieu de corrompre la base en silence
+    comme l'a fait le défaut du §3.4. Un ``assert`` aurait été désactivable
+    avec ``python -O`` ; une exception ne dépend pas de la façon dont on lance
+    l'interpréteur.
+    """
+
+
 @dataclass(frozen=True)
 class ResultatEcriture:
     """Ce qu'une écriture de fiche a RÉELLEMENT fait, révision incluse.
@@ -394,19 +449,44 @@ def ecrire_fiche_resultat(
     connexion: Any = None,
     *,
     categorie: tuple[str, str] | None = None,
+    pages: list[Any] | None = None,
+    gabarit: GabaritDef | None = None,
+    references: ReferencesConstatees | None = None,
+    referentiel_bateaux: set[str] | None = None,
 ) -> ResultatEcriture:
     """Comme :func:`ecrire_fiche`, mais rend aussi la révision résultante.
 
     ``categorie`` (Lot 7) : ``(categorie, source)`` proposée au dépôt —
     ``None`` retombe sur la famille du gabarit (source ``document``). Une
     catégorie déjà décidée par un humain n'est jamais écrasée ici.
+
+    ``pages`` (Lot 2) : pages déjà analysées du PDF. Transmises à la
+    projection accessoire, elles déclenchent la double vérification des cotes ;
+    omises, la projection est celle d'avant le Lot 2.
+
+    ``gabarit``, ``references``, ``referentiel_bateaux`` (Lots 1.2 à 1.4) : le
+    contexte des contrôles RG16, qui sont OBLIGATOIRES sur toute fiche
+    (Lot 1.5) et donc rejoués ici, à l'écriture. Une voie qui n'a pas ce
+    contexte applique quand même les contrôles — avec ce qu'elle sait.
     """
     if not fiche.code:
         raise ValueError("Fiche sans code : écriture refusée (reprise complète requise avant stockage).")
+    # Lot 1.5 : les contrôles RG16 sont OBLIGATOIRES sur TOUTE fiche, « pas
+    # seulement sur certaines voies ». Le verrou est posé À L'ÉCRITURE, seul
+    # endroit par où passe nécessairement une fiche, quelle que soit la voie
+    # qui l'a produite (gabarit, reprise, import…) : une fiche qui n'est jamais
+    # passée par l'extracteur ne peut donc pas y échapper. Il est appliqué dans
+    # `_ecrire_fiche_dans`, APRÈS les projections (voir là-bas pourquoi).
     if connexion is not None:
-        return _ecrire_fiche_dans(index, fiche, connexion, categorie=categorie)
+        return _ecrire_fiche_dans(
+            index, fiche, connexion, categorie=categorie, pages=pages,
+            gabarit=gabarit, references=references, referentiel_bateaux=referentiel_bateaux,
+        )
     with index.connect() as connexion_ext:
-        return _ecrire_fiche_dans(index, fiche, connexion_ext, categorie=categorie)
+        return _ecrire_fiche_dans(
+            index, fiche, connexion_ext, categorie=categorie, pages=pages,
+            gabarit=gabarit, references=references, referentiel_bateaux=referentiel_bateaux,
+        )
 
 
 def ecrire_fiche(index: Any, fiche: FicheExtraite, connexion: Any = None) -> tuple[int, str]:
@@ -495,10 +575,24 @@ def _ecrire_fiche_dans(
     connexion: Any,
     *,
     categorie: tuple[str, str] | None = None,
+    pages: list[Any] | None = None,
+    gabarit: GabaritDef | None = None,
+    references: ReferencesConstatees | None = None,
+    referentiel_bateaux: set[str] | None = None,
 ) -> ResultatEcriture:
+    """Corps historique de l'écriture, dans la transaction de l'appelant.
+
+    ``pages`` (Lot 2) : voir :func:`ecrire_fiche_resultat`.
+
+    ``gabarit``, ``references``, ``referentiel_bateaux`` (Lots 1.2 à 1.5) : le
+    contexte des contrôles RG16. Ils sont appliqués APRÈS les projections —
+    voir le commentaire de l'insertion des anomalies pourquoi cet ordre n'est
+    pas négociable.
+    """
     action = "creee"
     id_fiche: int | None = None  # positionné tôt si remplacement sur place
     revision_avant: int | None = None
+    id_type_voile_avant: int | None = None  # Lot 19 : axe déjà mesuré, à ne pas effacer
     if True:  # bloc conservé pour indentation stable du corps historique
         with connexion.cursor() as cursor:
             cursor.execute(_SQL_EXISTE_FICHE, (fiche.code,))
@@ -506,6 +600,8 @@ def _ecrire_fiche_dans(
             if existante is not None:
                 id_existante, statut = int(existante[0]), existante[1]
                 revision_avant = int(existante[2] if len(existante) > 2 and existante[2] is not None else 1)
+                if len(existante) > 3 and existante[3] is not None:
+                    id_type_voile_avant = int(existante[3])
                 if statut == "valide":
                     LOGGER.warning(
                         "Fiche id %d déjà VALIDÉE : ré-extraction ignorée — aucune donnée validée n'est écrasée (RG11).",
@@ -547,6 +643,31 @@ def _ecrire_fiche_dans(
                 LOGGER.info("Fiche id %d (a_valider) remplacée sur place par la nouvelle extraction (RG11, id conservé).", id_fiche)
 
             id_type_voile = _id_type_voile(cursor, fiche)
+            # Lot 19 — FUSION. Le remplacement sur place réécrit la ligne ENTIÈRE ;
+            # sans cette garde, une ré-extraction dont le gabarit ne retrouve pas le
+            # type de voile écrivait NULL par-dessus une valeur déjà mesurée. C'est la
+            # perte de données silencieuse du §3.4 du rapport, déjà deux victimes
+            # (« génois », « voile d'avant »). Décision explicite : compléter, jamais
+            # effacer. Une valeur effectivement RELUE remplace l'ancienne — la fusion
+            # n'est pas un gel.
+            if id_type_voile is None and id_type_voile_avant is not None:
+                LOGGER.warning(
+                    "Fiche %s : la ré-extraction ne lit aucun type de voile — l'axe mesuré "
+                    "(id_type_voile=%d) est CONSERVÉ au lieu d'être effacé (fusion, Lot 19).",
+                    fiche.code,
+                    id_type_voile_avant,
+                )
+                id_type_voile = id_type_voile_avant
+            # Garde-fou permanent (Lot 19) : l'invariant est désormais « une
+            # réécriture ne peut pas faire passer un axe mesuré à NULL ». La
+            # fusion ci-dessus l'établit ; ce contrôle le VÉRIFIE, pour qu'un
+            # refactorissement futur qui casserait la fusion échoue ici
+            # bruyamment au lieu de corrompre la base en silence.
+            if id_type_voile_avant is not None and id_type_voile is None:
+                raise ErreurEffacementAxe(
+                    f"Lot 19 : la réécriture de la fiche {fiche.code} effacerait "
+                    f"l'axe mesuré (id_type_voile={id_type_voile_avant}) — refus."
+                )
             id_client = None
             if fiche.client_nom:
                 id_client = _resoudre(cursor, _SQL_CLIENT, _SQL_CLIENT_INS, (fiche.client_nom, fiche.client_chantier))
@@ -597,7 +718,19 @@ def _ecrire_fiche_dans(
                     fiche.date_edition,
                     fiche.fichier_source,
                     id_gabarit,
-                    "a_valider",  # RG3 : jamais « valide » à l'arrivée
+                    # Statut d'arrivée PROVISOIRE (l'ancien RG3). Ce n'est plus
+                    # la règle depuis la décision du commanditaire du
+                    # 2026-11-14 : une fiche dont le score dépasse le seuil et
+                    # qui ne porte aucune anomalie bloquante est promue
+                    # « valide » PLUS BAS, dans cette même fonction et cette
+                    # même transaction, par `decider_statut_arrivee`. On ne
+                    # peut pas trancher ici : les anomalies RG16 — qui
+                    # l'emportent sur le score — ne sont connues qu'après les
+                    # projections. La règle est appliquée UNE SEULE FOIS, au
+                    # seul endroit qui a toutes ses données. Ne pas promouvoir
+                    # ailleurs : un second chemin de validation automatique
+                    # serait une règle concurrente.
+                    STATUT_ATTENTE_HUMAINE,
                     fiche.score_qualite(),
             )
             revision_apres: int
@@ -683,8 +816,6 @@ def _ecrire_fiche_dans(
                         fiche.gabarit_version,
                     ),
                 )
-            for anomalie in fiche.anomalies:
-                cursor.execute(_SQL_ANOMALIE_INS, (id_fiche, anomalie.code, anomalie.gravite, anomalie.message))
             # Lots 3a/7 : projection normalisée de la FAMILLE de la fiche,
             # dans LA MÊME transaction que la fiche et ses tables filles. La
             # catégorie (voile|accessoire + sa source) est tranchée ici,
@@ -700,25 +831,98 @@ def _ecrire_fiche_dans(
                 )
 
                 extraction_accessoire = construire_extraction_accessoire(
-                    fiche, id_fiche=id_fiche
+                    fiche, id_fiche=id_fiche, pages=pages
                 )
                 enregistrer_extraction_accessoire_curseur(cursor, extraction_accessoire)
             else:
                 extraction_voile = construire_extraction_voile(fiche, id_fiche=id_fiche)
                 enregistrer_extraction_voile_curseur(cursor, extraction_voile)
+            # Lot 1.5 — verrou RG16, APRÈS les projections, et cet ordre n'est
+            # pas négociable. La projection Lot 3a CANONISE (un guindant lu
+            # « 6600 mm » y devient 6,6 m) et juge la plausibilité sur ces
+            # valeurs canonisées. Évaluer les contrôles AVANT elle ferait
+            # porter un verdict géométrique sur des valeurs que la projection
+            # va corriger : une fiche saine serait déclarée « implausible »
+            # sur la foi d'une unité non encore convertie. Appliqués après,
+            # les contrôles alimentent la fiche sans jamais fausser le verdict
+            # de la projection. Mesuré : sur les PDF d'exemple, l'ordre ne
+            # change rien (l'extracteur canonise déjà) ; il ne diffère que sur
+            # une fiche dont les valeurs typées ne le sont pas encore.
+            appliquer_controles_rg16(
+                fiche,
+                referentiel_bateaux=referentiel_bateaux,
+                references=references,
+                gabarit=gabarit,
+            )
+            for anomalie in fiche.anomalies:
+                cursor.execute(_SQL_ANOMALIE_INS, (id_fiche, anomalie.code, anomalie.gravite, anomalie.message))
+
+            # ------------------------------------------------------------------
+            # LA RÈGLE DE STATUT D'ARRIVÉE, APPLIQUÉE ICI ET NULLE PART AILLEURS.
+            #
+            # Remplace RG3 (« le dépôt ne valide jamais »). Décision du
+            # commanditaire du 2026-11-14 : score strictement supérieur à 90 %
+            # et aucune anomalie bloquante ⇒ la fiche arrive « valide ».
+            #
+            # Pourquoi ICI et pas dans `parametres_fiche` : parce que les
+            # anomalies RG16 viennent d'être calculées juste au-dessus, et
+            # qu'elles PRIMENT sur le score. Trancher plus tôt reviendrait à
+            # auto-valider une fiche au score élevé mais à la géométrie
+            # incohérente. Le statut est donc écrit « a_valider », puis promu
+            # dans la même transaction, par une instruction qui vérifie qu'il
+            # est encore « a_valider ».
+            # ------------------------------------------------------------------
+            decision = decider_statut_arrivee(fiche.score_qualite(), fiche.anomalies)
+            if decision.auto_validee:
+                cursor.execute(
+                    _SQL_PROMOUVOIR_AUTO,
+                    (STATUT_AUTO_VALIDE, id_fiche, STATUT_ATTENTE_HUMAINE),
+                )
+                if cursor.rowcount != 1:
+                    # Ne doit pas arriver : la ligne est écrite quelques
+                    # instructions plus haut. Si cela arrive, c'est qu'un
+                    # second chemin a changé le statut — c'est un bug, pas une
+                    # situation à absorber en silence.
+                    raise RuntimeError(
+                        f"Auto-validation refusée : la fiche id {id_fiche} n'est plus "
+                        "en attente humaine au moment de la promotion."
+                    )
+                # Tracabilité : l'action est distincte (« auto_valider », pas
+                # « valider ») et l'acteur est ABSENT, volontairement.
+                cursor.execute(
+                    _SQL_JOURNAL_AUTO_VALIDATION,
+                    (
+                        id_fiche,
+                        _ACTION_JOURNAL_AUTO_VALIDATION,
+                        STATUT_ATTENTE_HUMAINE,
+                        STATUT_AUTO_VALIDE,
+                        decision.raison,
+                    ),
+                )
+                LOGGER.info(
+                    "Fiche id %d AUTO-VALIDÉE à l'arrivée (%s). Aucun approbateur humain.",
+                    id_fiche,
+                    decision.raison,
+                )
+            else:
+                LOGGER.info(
+                    "Fiche id %d laissée en attente humaine (%s).", id_fiche, decision.raison,
+                )
     # Phase 2.1 (production-readiness, décision commanditaire du 2026-09-29) :
     # le texte de recherche pondéré est rempli DÈS L'ÉCRITURE (statut
     # a_valider) — une fiche déposée est cherchable immédiatement, badgée
-    # « non vérifiée » par l'interface. RG3 INCHANGÉ : rien ne passe à
-    # « valide » sans décision humaine ; la validation rafraîchit à nouveau
-    # le texte (mêmes poids A/B/C) au moment où la fiche rejoint l'archive
-    # de confiance. Sans ce remplissage précoce, des milliers de fiches
-    # déposées mais non validées seraient invisibles à la recherche.
+    # « non vérifiée » par l'interface. La règle de statut d'arrivée a
+    # changé depuis (auto-validation au seuil de 90 %) ; ce remplissage,
+    # lui, ne change pas : la validation — humaine ou automatique —
+    # rafraîchit à nouveau le texte (mêmes poids A/B/C) au moment où la
+    # fiche rejoint l'archive de confiance. Sans ce remplissage précoce,
+    # des milliers de fiches déposées mais non validées seraient
+    # invisibles à la recherche.
     with connexion.cursor() as cursor:
         cursor.execute("SELECT rafraichir_texte_recherche_fiche(%s)", (id_fiche,))
     LOGGER.info(
-        "Fiche écrite (%s, id %d, statut a_valider, révision %d).",
-        action, id_fiche, revision_apres,
+        "Fiche écrite (%s, id %d, statut %s, révision %d).",
+        action, id_fiche, decision.statut, revision_apres,
     )
     return ResultatEcriture(
         id_fiche=id_fiche,
@@ -730,11 +934,11 @@ def _ecrire_fiche_dans(
 
 
 # ---------------------------------------------------------------------------
-# Vérité terrain du gabarit de référence (7792-SO) — non-régression (§13)
-# Source unique dans le paquet : seamtech_search.fiches.verite_7792 (74 cibles)
+# Vérité terrain du gabarit de référence (1042-EX) — non-régression (§13)
+# Source unique dans le paquet : seamtech_search.fiches.verite_reference (74 cibles)
 # ---------------------------------------------------------------------------
 
-_ = VERITE_7792_COMPLETE  # Ré-export explicite pour compatibilité et non-régression
+_ = VERITE_REFERENCE_COMPLETE  # Ré-export explicite pour compatibilité et non-régression
 
 
 def _valeur_extraite(fiche: FicheExtraite, cible: str) -> object:
@@ -809,8 +1013,8 @@ def evaluer_verite(fiche: FicheExtraite, attendu: dict[str, object]) -> tuple[fl
     return round(corrects / len(attendu), 4) if attendu else 0.0, ecarts
 
 
-def initialiser_verite_7792(index: Any, chemin_pdf: Path | None = None) -> None:
-    """Enregistre la vérité 7792 dans ``gabarit_test`` (non-régression du gabarit).
+def initialiser_verite_reference(index: Any, chemin_pdf: Path | None = None) -> None:
+    """Enregistre la vérité 1042 dans ``gabarit_test`` (non-régression du gabarit).
 
     Vérité mesurée sur le DOCUMENT CLIENT RÉEL (reçu le 21/09, SHA-256
     43afc51e…) — plus sur la reconstruction. La version enregistrée suit la
@@ -824,23 +1028,23 @@ def initialiser_verite_7792(index: Any, chemin_pdf: Path | None = None) -> None:
         with connexion.cursor() as cursor:
             cursor.execute(
                 "DELETE FROM gabarit_test WHERE code_gabarit = %s AND nom_fichier = %s",
-                ("FICHE_PORTANT_V1", "fiche-7792-SO_ffab.pdf"),
+                ("FICHE_PORTANT_V1", "fiche-1042-EX_ffab.pdf"),
             )
             cursor.execute(
                 _SQL_GABARIT_TEST_INS,
                 (
                     "FICHE_PORTANT_V1",
                     2,
-                    "fiche-7792-SO_ffab.pdf",
+                    "fiche-1042-EX_ffab.pdf",
                     empreinte,
-                    json.dumps(VERITE_7792, ensure_ascii=False),
-                    "Vérité mesurée sur le document client réel 7792-SO (21/09), "
+                    json.dumps(VERITE_REFERENCE, ensure_ascii=False),
+                    "Vérité mesurée sur le document client réel 1042-EX (21/09), "
                     "réglage gabarit v2 — jamais de valeur inventée (RG6).",
                 ),
             )
 
 
-def verifier_non_regression(index: Any, fiche: FicheExtraite, nom_fichier: str = "fiche-7792-SO_ffab.pdf") -> dict[str, Any]:
+def verifier_non_regression(index: Any, fiche: FicheExtraite, nom_fichier: str = "fiche-1042-EX_ffab.pdf") -> dict[str, Any]:
     """Compare une fiche extraite à la vérité enregistrée (banc gabarit_test)."""
     with index.connect() as connexion:
         with connexion.cursor() as cursor:

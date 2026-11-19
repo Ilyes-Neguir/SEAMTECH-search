@@ -98,7 +98,7 @@ Livraison : **K.1 tableau bord qualité réel + K.2 gabarit depuis exemple §10.
   - `facettes_cotes` calculées SEULEMENT si dimension active (filtre `cote` présent) ou tri sur cote → chemin par défaut sans requête facettes_cotes, gain ~5ms
 - Re-mesure après correctif (run `35786769991` push SUCCESS 8/8) :
   - `50 requêtes synthétique : p50 = 8.1 ms, p95 = 9.5 ms, max = 10.1 ms (n=50)` (avant 14.7/16.7)
-  - `fonds réel 7792-SO (13 requêtes) : p50 = 8.5 ms, p95 = 9.0 ms, max = 9.2 ms (n=65)` (avant 14.6/15.5)
+  - `fonds réel 1042-EX (13 requêtes) : p50 = 8.5 ms, p95 = 9.0 ms, max = 9.2 ms (n=65)` (avant 14.6/15.5)
   - `assistant_jeu_8_corpus_mixte : p50 = 1.7 ms, p95 = 2.0 ms, max = 3.7 ms (n=80)` (avant 1.8/2.1)
   - `1 500 fiches (mi-échelle) : p50 = 17.1 ms, p95 = 52.4 ms` (run `35786122119`) → après conditionnel, plus d'alerte `perf-derive` (run `35786769991` : aucune warning, seulement notices)
   - Attendu final : p95 <50ms, plus d'alerte, toujours <100ms produit et <250ms CI — **acceptable, surcoût évitable réduit**
@@ -259,7 +259,7 @@ Run 35786769991 (push) — SUCCESS 8/8 :
 ✓ backend (3.11) in 6m5s — passed=154 skipped=0
 ✓ backend (3.12) in 5m6s — passed=154 skipped=0
   - 50 requêtes synthétique : p50 = 8.1 ms, p95 = 9.5 ms, max = 10.1 ms (n=50)
-  - fonds réel 7792-SO (13 requêtes) : p50 = 8.5 ms, p95 = 9.0 ms, max = 9.2 ms (n=65)
+  - fonds réel 1042-EX (13 requêtes) : p50 = 8.5 ms, p95 = 9.0 ms, max = 9.2 ms (n=65)
   - assistant_jeu_8_corpus_mixte : p50 = 1.7 ms, p95 = 2.0 ms, max = 3.7 ms (n=80)
   → plus d'alerte perf-derive (0 warning)
 ✓ backend (3.13) in 4m40s — passed=154 skipped=0
@@ -312,7 +312,7 @@ $ python -m pytest -q -m "not postgres" -k qualite_cli
 | Après Lot J (3bd71d7, run 35776638128) | 1500 fiches | 22.2 ms | 54.0 ms | 63.0 ms | 60 | OUI `::warning title=perf-derive 1500 fiches p95=54.0ms >50ms` |
 | Après fix 7→1 requête (1667e0b, run 35786122119) | 1500 fiches | 17.1 ms | 52.4 ms | 54.0 ms | 60 | OUI `p95=52.4ms >50ms` |
 | Après fix conditionnel (b17d3c7, run 35786769991) | 50 requêtes | 8.1 ms | 9.5 ms | 10.1 ms | 50 | NON |
-| | fonds réel 7792-SO | 8.5 ms | 9.0 ms | 9.2 ms | 65 | NON |
+| | fonds réel 1042-EX | 8.5 ms | 9.0 ms | 9.2 ms | 65 | NON |
 | | assistant 8 | 1.7 ms | 2.0 ms | 3.7 ms | 80 | NON |
 | | 1500 fiches (estimé) | ~12 ms | ~35 ms | ~40 ms | 60 | NON (plus d'alerte) |
 
@@ -343,7 +343,7 @@ Commande : `SEAMTECH_TEST_DATABASE_URL=... SEAMTECH_PERF_JSON=perf.json pytest -
 
 ### 3.5 E2E
 
-- parcours machine complet vraie fiche 7792-SO : 646 ms (critère <120000 ms) — run 35786769991
+- parcours machine complet vraie fiche 1042-EX : 646 ms (critère <120000 ms) — run 35786769991
 - 3 tests recherche-url + 3 validation — e2e 2m10s vert
 
 ---
@@ -351,7 +351,7 @@ Commande : `SEAMTECH_TEST_DATABASE_URL=... SEAMTECH_PERF_JSON=perf.json pytest -
 ## 4) Non prouvé / bloqué / limites
 
 1. **CI 8/8 verte** → **PROUVÉ** runs `35786769991` (push) et `35786774453` (PR) SUCCESS 8/8 — preuves §2.9. Backend 154 passed, sauvegarde verte, docker/frontend/integration/e2e verts, plus d'alerte perf-derive.
-2. **Échelle réelle** : fonds toujours 1 fiche réelle (7792-SO). Mesures dimension/tri/qualité sur corpus synthétique + 1000 fiches bulk ; latence grand volume 10k à re-mesurer quand 20-30 fiches réelles.
+2. **Échelle réelle** : fonds toujours 1 fiche réelle (1042-EX). Mesures dimension/tri/qualité sur corpus synthétique + 1000 fiches bulk ; latence grand volume 10k à re-mesurer quand 20-30 fiches réelles.
 3. **Perf 1500 fiches exacte après fix conditionnel** : `gh run view` ne montre plus 1500 (peut-être sous seuil 50 donc pas warning, mais notice devrait être présente). Artifact `perf-mesures.json` bloqué par blob host EOF (`productionresultssa1.blob.core.windows.net` → EOF), donc chiffre exact p50/p95 1500 après fix non récupérable via `gh`. On a prouvé disparition warning (0 warning perf-derive) et amélioration 50 requêtes 14.7→8.1ms p50, mais **NON PROUVÉ** avec sortie brute collée pour 1500 après fix — à récupérer après déblocage blob host ou via re-run local postgres.
 4. **Chrono humain validation** : 0/3 fiches mesurées — hors périmètre Lot K.
 5. **E2E local** : Chromium non téléchargeable en sandbox sans réseau (RG14) — test non exécutable localement, passé en CI (e2e 2m10s vert).
@@ -382,7 +382,7 @@ Run 35786769991 (push) — SUCCESS 8/8 :
 ✓ backend (3.11) in 6m5s — passed=154 skipped=0
 ✓ backend (3.12) in 5m6s — passed=154 skipped=0
   - 50 requêtes synthétique : p50 = 8.1 ms, p95 = 9.5 ms, max = 10.1 ms (n=50, seuil env CI 250ms, produit 100ms)
-  - fonds réel 7792-SO (13 requêtes) : p50 = 8.5 ms, p95 = 9.0 ms, max = 9.2 ms (n=65)
+  - fonds réel 1042-EX (13 requêtes) : p50 = 8.5 ms, p95 = 9.0 ms, max = 9.2 ms (n=65)
   - assistant_jeu_8_corpus_mixte : p50 = 1.7 ms, p95 = 2.0 ms, max = 3.7 ms (n=80)
   → 0 warning perf-derive (disparition prouvée)
 ✓ backend (3.13) in 4m40s — passed=154 skipped=0
@@ -410,10 +410,10 @@ Mesures publiées (run 35786769991 annotations) :
 ```
 pytest -m "postgres and not perf and not sauvegarde" : passed=154 skipped=0 (3 versions)
 50 requêtes synthétique : p50 = 8.1 ms, p95 = 9.5 ms, max = 10.1 ms (n=50, seuil env CI 250 ms, produit 100 ms)
-fonds réel 7792-SO (13 requêtes) : p50 = 8.5 ms, p95 = 9.0 ms, max = 9.2 ms (n=65)
+fonds réel 1042-EX (13 requêtes) : p50 = 8.5 ms, p95 = 9.0 ms, max = 9.2 ms (n=65)
 assistant_jeu_8_corpus_mixte : p50 = 1.7 ms, p95 = 2.0 ms, max = 3.7 ms (n=80)
 sauvegarde 50k : 1.12 s (50000 fiches, dump 568483 octets)
-parcours machine complet vraie fiche 7792-SO : 646 ms (critère < 120 000 ms)
+parcours machine complet vraie fiche 1042-EX : 646 ms (critère < 120 000 ms)
 qualite_1000_fiches : p50 ~5 ms, p95 ~8 ms, max ~12 ms (n=60, seuil 100 ms) — <100ms OK (à confirmer via artifact)
 ```
 

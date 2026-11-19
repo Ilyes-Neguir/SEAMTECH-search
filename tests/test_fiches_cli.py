@@ -7,16 +7,16 @@ from pathlib import Path
 from seamtech_search.fiches import cli
 
 RACINE = Path(__file__).resolve().parent.parent
-PDF_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+PDF_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 PDF_GENOIS = RACINE / "sample_data/CLIENT-GENOA/fiche-genois.pdf"
 
 
 class TestExtraire:
-    def test_rapport_7792_champ_par_champ(self, capsys) -> None:
-        code_sortie = cli.principal(["extraire", str(PDF_7792)])
+    def test_rapport_reference_champ_par_champ(self, capsys) -> None:
+        code_sortie = cli.principal(["extraire", str(PDF_REFERENCE)])
         assert code_sortie == 0
         rapport = capsys.readouterr().out
-        assert "7792-SO" in rapport
+        assert "1042-EX" in rapport
         assert "FICHE_PORTANT_V1" in rapport
         assert "fiche.code" in rapport and "cotes.finie.slu_m" in rapport
         assert "zone" not in rapport or True  # les zones sont dans les lignes ci-dessus
@@ -50,10 +50,10 @@ class TestExtraire:
             raise AssertionError("extraire ne doit pas toucher à la base")
 
         monkeypatch.setattr(cli, "_index", _interdit)
-        assert cli.principal(["extraire", str(PDF_7792)]) == 0
+        assert cli.principal(["extraire", str(PDF_REFERENCE)]) == 0
 
     def test_banc_autonome_74_cibles(self, capsys) -> None:
-        code_sortie = cli.principal(["banc", str(PDF_7792)])
+        code_sortie = cli.principal(["banc", str(PDF_REFERENCE)])
         assert code_sortie == 0
         rapport = capsys.readouterr().out
         assert "74/74" in rapport

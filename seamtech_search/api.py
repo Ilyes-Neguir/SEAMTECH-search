@@ -18,6 +18,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import __version__
 from .audit import actor_fingerprint, get_audit_logs, record_audit_event
@@ -284,6 +285,15 @@ def create_app(config: AppConfig) -> FastAPI:
         redoc_url="/redoc" if docs_enabled else None,
         openapi_url="/openapi.json" if docs_enabled else None,
     )
+    # Validation de l'en-tête Host (défense contre l'injection d'hôte :
+    # empoisonnement de liens, de cache). Active seulement si des hôtes sont
+    # déclarés (SEAMTECH_ALLOWED_HOSTS) ; le loopback reste toujours accepté
+    # pour les sondes de santé et les appels locaux.
+    if config.allowed_hosts:
+        app.add_middleware(
+            TrustedHostMiddleware,
+            allowed_hosts=[*config.allowed_hosts, "127.0.0.1", "localhost", "[::1]"],
+        )
     # Eager init for TestClient usage that does not trigger lifespan, but health
     # itself remains read-only (does not call initialize).
     _initialize_schema(index, "app construction")
@@ -396,6 +406,17 @@ def create_app(config: AppConfig) -> FastAPI:
             **acteur.contexte_audit(),
         )
 
+    # En-têtes de sécurité pour l'API (défense en profondeur : le front les
+    # pose déjà, et Cloudflare peut les émettre au bord — l'origine les pose
+    # aussi, pour que la protection ne dépende pas d'un seul maillon).
+    # HSTS : l'API est servie derrière un proxy TLS en production.
+    EN_TETES_SECURITE_API = {
+        "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "same-origin",
+    }
+
     # ---------------------------------------------------------------------------
     # Middleware: X-Request-ID & Sliding-Window Rate Limiter
     # ---------------------------------------------------------------------------
@@ -458,6 +479,7 @@ def create_app(config: AppConfig) -> FastAPI:
                         "Retry-After": str(retry_after),
                         "X-Request-ID": request_id,
                         "Cache-Control": "no-store, no-cache, must-revalidate, private",
+                        **EN_TETES_SECURITE_API,
                     },
                 )
 
@@ -476,6 +498,7 @@ def create_app(config: AppConfig) -> FastAPI:
                     headers={
                         "X-Request-ID": request_id,
                         "Cache-Control": "no-store, no-cache, must-revalidate, private",
+                        **EN_TETES_SECURITE_API,
                     },
                 )
                 if _requete_a_auditer(request.method, path, reponse_refus.status_code):
@@ -493,6 +516,8 @@ def create_app(config: AppConfig) -> FastAPI:
 
         response: Response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
+        for cle, valeur in EN_TETES_SECURITE_API.items():
+            response.headers.setdefault(cle, valeur)
         if path not in exempt_paths:
             # Lot 0a : aucune réponse authentifiée ne doit survivre dans un
             # cache navigateur/proxy après déconnexion (bouton Retour).
@@ -588,6 +613,23 @@ def create_app(config: AppConfig) -> FastAPI:
 
         sauvegarde = etat_sauvegarde(config)
 
+        # Lot 21 — le corpus mesuré n'est couvert par AUCUNE des protections
+        # précédentes : il n'est ni dans la base (c'est un dépôt de fichiers)
+        # ni dans l'archive indexée. Son état est donc lu SUR LE STOCKAGE
+        # DISTANT, pas sur le disque : un âge calculé depuis le disque ne
+        # prouverait pas qu'une copie existe ailleurs. Une lecture impossible
+        # rend ``protege`` nul (« inconnu »), jamais vrai.
+        try:
+            from .sauvegarde import _client_s3_depuis_env
+            from .sauvegarde_corpus import dossier_corpus
+            from .sauvegarde_corpus import verifier as verifier_corpus
+
+            corpus: dict[str, object] = dict(verifier_corpus(_client_s3_depuis_env()))
+            corpus["dossier"] = str(dossier_corpus())
+        except Exception as exc:
+            # Type seul : le motif peut contenir un endpoint ou une clé.
+            corpus = {"protege": None, "motif": f"évaluation impossible ({type(exc).__name__})"}
+
         return {
             "status": "ok",
             **health_details,
@@ -615,6 +657,8 @@ def create_app(config: AppConfig) -> FastAPI:
                 "recoverables": jobs_par_statut.get("pending", 0),
             },
             "backup": sauvegarde,
+            # Lot 21 : le corpus, seul exemplaire des mesures faites à la main.
+            "corpus": corpus,
             # Read-only probe (never puts versioning): False means the endpoint
             # cannot version (Cloudflare R2), None means "could not find out".
             **versioning,

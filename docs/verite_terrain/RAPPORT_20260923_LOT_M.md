@@ -15,7 +15,7 @@ M.3 — Règle étage prouvée : PDF natif 0 page océrisée, scan océrisé, id
 
 M.4 — Nocturne : verrou fichier un seul run code 2, reprise Ctrl-C/SIGTERM/budget, budget-minutes respect minute, compte rendu JSON+texte débit pages/min, planification doc Windows schtasks + Linux cron non exécutée.
 
-M.5 — Échantillons 2 PDF scannés <150Ko commités tests/fixtures/ocr/ + generate_fixtures.py déterministe seed 42 + fake_tesseract.py, mesure qualité taux mots retrouvés ≥0.90 propre, second dégradé publié, test PDF natif 7792-SO non océrisé porte M.7.
+M.5 — Échantillons 2 PDF scannés <150Ko commités tests/fixtures/ocr/ + generate_fixtures.py déterministe seed 42 + fake_tesseract.py, mesure qualité taux mots retrouvés ≥0.90 propre, second dégradé publié, test PDF natif 1042-EX non océrisé porte M.7.
 
 M.6 — Indicateur tableau bord ocr_etage3, CLES 9→10 égalité exacte, test valeurs, docs/API.md.
 

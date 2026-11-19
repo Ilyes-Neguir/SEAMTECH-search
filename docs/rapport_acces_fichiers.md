@@ -47,7 +47,7 @@ La reproduction a été faite dynamiquement en exécutant le handler historique 
 
 - Ajout de tests API pour fichiers locaux et stockage S3 simulé : catalogue, autorisation, ID inconnu, `GET`, `HEAD`, `Range`/`206`, disposition inline/attachment et absence de chemin/clé/URL de stockage dans les réponses.
 - Recherche : tests vérifiant l’ID et l’absence de champs de chemin/objet.
-- Recette : sept contrôles fonctionnels ajoutés — quatre parcours métier, pièces par ID, intégrité SHA-256 des sept PDF sources (dont GIB SEA `250328 AJA`) et catalogue Fichiers. Le total déclaré reste **19 fonctionnels + 8 orchestration = 27**.
+- Recette : sept contrôles fonctionnels ajoutés — quatre parcours métier, pièces par ID, intégrité SHA-256 des sept PDF sources (dont GIB SEA `250108 AB`) et catalogue Fichiers. Le total déclaré reste **19 fonctionnels + 8 orchestration = 27**.
 - Ajout des parcours Playwright des fichiers et de sondes d’authentification pour le catalogue et les routes d’aperçu/téléchargement.
 - `.gitattributes` fixe le checkout CRLF des scripts PowerShell. Les 9 scripts ont été contrôlés en BOM UTF-8 et CRLF; aucun volume de données ni archive RG13 n’a été modifié.
 

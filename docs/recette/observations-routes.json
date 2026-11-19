@@ -1,0 +1,4253 @@
+{
+ "routes": 116,
+ "observations": [
+  {
+   "methode": "GET",
+   "modele": "/accessoires/extractions",
+   "chemin": "/accessoires/extractions",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Accessoires disponibles sur PostgreSQL uniquement : les tables accessory_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/accessoires/extractions",
+   "chemin": "/accessoires/extractions",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/accessoires/extractions",
+   "chemin": "/accessoires/extractions",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Accessoires disponibles sur PostgreSQL uniquement : les tables accessory_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/accessoires/extractions",
+   "chemin": "/accessoires/extractions",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Accessoires disponibles sur PostgreSQL uniquement : les tables accessory_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/accessoires/extractions/{id_extraction}",
+   "chemin": "/accessoires/extractions/1",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Accessoires disponibles sur PostgreSQL uniquement : les tables accessory_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/accessoires/extractions/{id_extraction}",
+   "chemin": "/accessoires/extractions/1",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/accessoires/extractions/{id_extraction}",
+   "chemin": "/accessoires/extractions/pas-un-nombre",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_extraction\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/accessoires/extractions/{id_extraction}",
+   "chemin": "/accessoires/extractions/999999",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Accessoires disponibles sur PostgreSQL uniquement : les tables accessory_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/accessoires/extractions/{id_extraction}/resoudre",
+   "chemin": "/accessoires/extractions/1/resoudre",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Accessoires disponibles sur PostgreSQL uniquement : les tables accessory_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/accessoires/extractions/{id_extraction}/resoudre",
+   "chemin": "/accessoires/extractions/1/resoudre",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/accessoires/extractions/{id_extraction}/resoudre",
+   "chemin": "/accessoires/extractions/pas-un-nombre/resoudre",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_extraction\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/accessoires/extractions/{id_extraction}/resoudre",
+   "chemin": "/accessoires/extractions/999999/resoudre",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Accessoires disponibles sur PostgreSQL uniquement : les tables accessory_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/accessoires/extractions/{id_extraction}/lier",
+   "chemin": "/accessoires/extractions/1/lier",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Accessoires disponibles sur PostgreSQL uniquement : les tables accessory_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/accessoires/extractions/{id_extraction}/lier",
+   "chemin": "/accessoires/extractions/1/lier",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/accessoires/extractions/{id_extraction}/lier",
+   "chemin": "/accessoires/extractions/pas-un-nombre/lier",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_extraction\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/accessoires/extractions/{id_extraction}/lier",
+   "chemin": "/accessoires/extractions/999999/lier",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Accessoires disponibles sur PostgreSQL uniquement : les tables accessory_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/accessoires/extractions/{id_extraction}/corriger",
+   "chemin": "/accessoires/extractions/1/corriger",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Accessoires disponibles sur PostgreSQL uniquement : les tables accessory_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/accessoires/extractions/{id_extraction}/corriger",
+   "chemin": "/accessoires/extractions/1/corriger",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/accessoires/extractions/{id_extraction}/corriger",
+   "chemin": "/accessoires/extractions/pas-un-nombre/corriger",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_extraction\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/accessoires/extractions/{id_extraction}/corriger",
+   "chemin": "/accessoires/extractions/999999/corriger",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Accessoires disponibles sur PostgreSQL uniquement : les tables accessory_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/accessoires/fiches/{id_fiche}/categorie",
+   "chemin": "/accessoires/fiches/1/categorie",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Accessoires disponibles sur PostgreSQL uniquement : les tables accessory_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/accessoires/fiches/{id_fiche}/categorie",
+   "chemin": "/accessoires/fiches/1/categorie",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/accessoires/fiches/{id_fiche}/categorie",
+   "chemin": "/accessoires/fiches/pas-un-nombre/categorie",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_fiche\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/accessoires/fiches/{id_fiche}/categorie",
+   "chemin": "/accessoires/fiches/999999/categorie",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Accessoires disponibles sur PostgreSQL uniquement : les tables accessory_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/accessoires_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/live",
+   "chemin": "/live",
+   "sonde": "nominal",
+   "statut": 200,
+   "extrait": "{\"status\":\"alive\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/live",
+   "chemin": "/live",
+   "sonde": "non autorisé",
+   "statut": 200,
+   "extrait": "{\"status\":\"alive\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/live",
+   "chemin": "/live",
+   "sonde": "paramètre invalide",
+   "statut": 200,
+   "extrait": "{\"status\":\"alive\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/live",
+   "chemin": "/live",
+   "sonde": "ressource absente",
+   "statut": 200,
+   "extrait": "{\"status\":\"alive\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/ready",
+   "chemin": "/ready",
+   "sonde": "nominal",
+   "statut": 200,
+   "extrait": "{\"status\":\"ready\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/ready",
+   "chemin": "/ready",
+   "sonde": "non autorisé",
+   "statut": 200,
+   "extrait": "{\"status\":\"ready\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/ready",
+   "chemin": "/ready",
+   "sonde": "paramètre invalide",
+   "statut": 200,
+   "extrait": "{\"status\":\"ready\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/ready",
+   "chemin": "/ready",
+   "sonde": "ressource absente",
+   "statut": 200,
+   "extrait": "{\"status\":\"ready\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/",
+   "chemin": "/",
+   "sonde": "nominal",
+   "statut": 200,
+   "extrait": "{\"service\":\"seamtech-search-api\",\"health\":\"/health\",\"docs\":\"/docs\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/",
+   "chemin": "/",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/",
+   "chemin": "/",
+   "sonde": "paramètre invalide",
+   "statut": 200,
+   "extrait": "{\"service\":\"seamtech-search-api\",\"health\":\"/health\",\"docs\":\"/docs\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/",
+   "chemin": "/",
+   "sonde": "ressource absente",
+   "statut": 200,
+   "extrait": "{\"service\":\"seamtech-search-api\",\"health\":\"/health\",\"docs\":\"/docs\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/health",
+   "chemin": "/health",
+   "sonde": "nominal",
+   "statut": 200,
+   "extrait": "{\"status\":\"ok\",\"backend\":\"sqlite\",\"database_path\":\"/tmp/recette-routes-jglg9xo7/search.db\",\"database_exists\":true,\"database_bytes\":94208,\"database_integrity\":\"ok\",\"schema_migrations\":[\"001_initial\",\"0",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/health",
+   "chemin": "/health",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/health",
+   "chemin": "/health",
+   "sonde": "paramètre invalide",
+   "statut": 200,
+   "extrait": "{\"status\":\"ok\",\"backend\":\"sqlite\",\"database_path\":\"/tmp/recette-routes-jglg9xo7/search.db\",\"database_exists\":true,\"database_bytes\":94208,\"database_integrity\":\"ok\",\"schema_migrations\":[\"001_initial\",\"0",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/health",
+   "chemin": "/health",
+   "sonde": "ressource absente",
+   "statut": 200,
+   "extrait": "{\"status\":\"ok\",\"backend\":\"sqlite\",\"database_path\":\"/tmp/recette-routes-jglg9xo7/search.db\",\"database_exists\":true,\"database_bytes\":94208,\"database_integrity\":\"ok\",\"schema_migrations\":[\"001_initial\",\"0",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/search",
+   "chemin": "/search",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"q\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/search",
+   "chemin": "/search",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/search",
+   "chemin": "/search",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"q\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/search",
+   "chemin": "/search",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"q\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/metrics",
+   "chemin": "/metrics",
+   "sonde": "nominal",
+   "statut": 200,
+   "extrait": "{\"search_requests\":0,\"search_errors\":0,\"last_search_seconds\":0.0,\"slowest_search_seconds\":0.0,\"recherche_requests\":0,\"recherche_sans_resultat\":0,\"health\":{\"status\":\"ok\",\"backend\":\"sqlite\",\"database_pa",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/metrics",
+   "chemin": "/metrics",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/metrics",
+   "chemin": "/metrics",
+   "sonde": "paramètre invalide",
+   "statut": 200,
+   "extrait": "{\"search_requests\":0,\"search_errors\":0,\"last_search_seconds\":0.0,\"slowest_search_seconds\":0.0,\"recherche_requests\":0,\"recherche_sans_resultat\":0,\"health\":{\"status\":\"ok\",\"backend\":\"sqlite\",\"database_pa",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/metrics",
+   "chemin": "/metrics",
+   "sonde": "ressource absente",
+   "statut": 200,
+   "extrait": "{\"search_requests\":0,\"search_errors\":0,\"last_search_seconds\":0.0,\"slowest_search_seconds\":0.0,\"recherche_requests\":0,\"recherche_sans_resultat\":0,\"health\":{\"status\":\"ok\",\"backend\":\"sqlite\",\"database_pa",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/preview",
+   "chemin": "/preview",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"path\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/preview",
+   "chemin": "/preview",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/preview",
+   "chemin": "/preview",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"path\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/preview",
+   "chemin": "/preview",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"path\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/open",
+   "chemin": "/open",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"path\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/open",
+   "chemin": "/open",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/open",
+   "chemin": "/open",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"path\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/open",
+   "chemin": "/open",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"path\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports",
+   "chemin": "/imports",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports",
+   "chemin": "/imports",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports",
+   "chemin": "/imports",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports",
+   "chemin": "/imports",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/scan",
+   "chemin": "/imports/scan",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/scan",
+   "chemin": "/imports/scan",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/scan",
+   "chemin": "/imports/scan",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/scan",
+   "chemin": "/imports/scan",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/confirm",
+   "chemin": "/imports/confirm",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/confirm",
+   "chemin": "/imports/confirm",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/confirm",
+   "chemin": "/imports/confirm",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/confirm",
+   "chemin": "/imports/confirm",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/upload",
+   "chemin": "/imports/upload",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\",\"files\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/upload",
+   "chemin": "/imports/upload",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/upload",
+   "chemin": "/imports/upload",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\",\"files\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/upload",
+   "chemin": "/imports/upload",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\",\"files\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/imports/{import_id}",
+   "chemin": "/imports/1",
+   "sonde": "nominal",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Import not found.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/imports/{import_id}",
+   "chemin": "/imports/1",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/imports/{import_id}",
+   "chemin": "/imports/pas-un-nombre",
+   "sonde": "paramètre invalide",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Import not found.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/imports/{import_id}",
+   "chemin": "/imports/999999",
+   "sonde": "ressource absente",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Import not found.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/{import_id}/cancel",
+   "chemin": "/imports/1/cancel",
+   "sonde": "nominal",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Import not found.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/{import_id}/cancel",
+   "chemin": "/imports/1/cancel",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/{import_id}/cancel",
+   "chemin": "/imports/pas-un-nombre/cancel",
+   "sonde": "paramètre invalide",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Import not found.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/{import_id}/cancel",
+   "chemin": "/imports/999999/cancel",
+   "sonde": "ressource absente",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Import not found.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "PATCH",
+   "modele": "/imports/{import_id}",
+   "chemin": "/imports/1",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "PATCH",
+   "modele": "/imports/{import_id}",
+   "chemin": "/imports/1",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "PATCH",
+   "modele": "/imports/{import_id}",
+   "chemin": "/imports/pas-un-nombre",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "PATCH",
+   "modele": "/imports/{import_id}",
+   "chemin": "/imports/999999",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/{import_id}/retry-upload",
+   "chemin": "/imports/1/retry-upload",
+   "sonde": "nominal",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Import not found.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/{import_id}/retry-upload",
+   "chemin": "/imports/1/retry-upload",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/{import_id}/retry-upload",
+   "chemin": "/imports/pas-un-nombre/retry-upload",
+   "sonde": "paramètre invalide",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Import not found.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/{import_id}/retry-upload",
+   "chemin": "/imports/999999/retry-upload",
+   "sonde": "ressource absente",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Import not found.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/imports/{import_id}/artifacts/{artifact}",
+   "chemin": "/imports/1/artifacts/extrait.pdf",
+   "sonde": "nominal",
+   "statut": 400,
+   "extrait": "{\"detail\":\"Unknown artifact. Allowed: report_docx, report_pdf, source_excel, source_pdf\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/imports/{import_id}/artifacts/{artifact}",
+   "chemin": "/imports/1/artifacts/extrait.pdf",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/imports/{import_id}/artifacts/{artifact}",
+   "chemin": "/imports/pas-un-nombre/artifacts/pas-un-nombre",
+   "sonde": "paramètre invalide",
+   "statut": 400,
+   "extrait": "{\"detail\":\"Unknown artifact. Allowed: report_docx, report_pdf, source_excel, source_pdf\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/imports/{import_id}/artifacts/{artifact}",
+   "chemin": "/imports/999999/artifacts/999999",
+   "sonde": "ressource absente",
+   "statut": 400,
+   "extrait": "{\"detail\":\"Unknown artifact. Allowed: report_docx, report_pdf, source_excel, source_pdf\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/maintenance/replay-deadletters",
+   "chemin": "/maintenance/replay-deadletters",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Redis not configured\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/maintenance/replay-deadletters",
+   "chemin": "/maintenance/replay-deadletters",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/maintenance/replay-deadletters",
+   "chemin": "/maintenance/replay-deadletters",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Redis not configured\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/maintenance/replay-deadletters",
+   "chemin": "/maintenance/replay-deadletters",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Redis not configured\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/maintenance/deadletters",
+   "chemin": "/maintenance/deadletters",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Redis not configured\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/maintenance/deadletters",
+   "chemin": "/maintenance/deadletters",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/maintenance/deadletters",
+   "chemin": "/maintenance/deadletters",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Redis not configured\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/maintenance/deadletters",
+   "chemin": "/maintenance/deadletters",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Redis not configured\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/maintenance/cleanup",
+   "chemin": "/maintenance/cleanup",
+   "sonde": "nominal",
+   "statut": 200,
+   "extrait": "{\"status\":\"ok\",\"cleanup\":{\"pruned_reports\":0,\"pruned_staged_uploads\":0,\"pruned_audit_logs\":0,\"chemins_proteges\":0,\"jobs_proteges\":0,\"protection_indisponible\":null}}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/maintenance/cleanup",
+   "chemin": "/maintenance/cleanup",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/maintenance/cleanup",
+   "chemin": "/maintenance/cleanup",
+   "sonde": "paramètre invalide",
+   "statut": 200,
+   "extrait": "{\"status\":\"ok\",\"cleanup\":{\"pruned_reports\":0,\"pruned_staged_uploads\":0,\"pruned_audit_logs\":0,\"chemins_proteges\":0,\"jobs_proteges\":0,\"protection_indisponible\":null}}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/maintenance/cleanup",
+   "chemin": "/maintenance/cleanup",
+   "sonde": "ressource absente",
+   "statut": 200,
+   "extrait": "{\"status\":\"ok\",\"cleanup\":{\"pruned_reports\":0,\"pruned_staged_uploads\":0,\"pruned_audit_logs\":0,\"chemins_proteges\":0,\"jobs_proteges\":0,\"protection_indisponible\":null}}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/audit",
+   "chemin": "/audit",
+   "sonde": "nominal",
+   "statut": 200,
+   "extrait": "{\"count\":50,\"offset\":0,\"limit\":50,\"results\":[{\"id\":98,\"timestamp\":\"2026-11-14T08:53:45.876004+00:00\",\"actor\":\"token:f424ac74c12e\",\"action\":\"http_request\",\"resource\":\"/maintenance/cleanup\",\"status\":\"20",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/audit",
+   "chemin": "/audit",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/audit",
+   "chemin": "/audit",
+   "sonde": "paramètre invalide",
+   "statut": 200,
+   "extrait": "{\"count\":50,\"offset\":0,\"limit\":50,\"results\":[{\"id\":100,\"timestamp\":\"2026-11-14T08:53:45.892069+00:00\",\"actor\":\"local\",\"action\":\"http_request\",\"resource\":\"/audit\",\"status\":\"401\",\"details\":{\"method\":\"GE",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/audit",
+   "chemin": "/audit",
+   "sonde": "ressource absente",
+   "statut": 200,
+   "extrait": "{\"count\":50,\"offset\":0,\"limit\":50,\"results\":[{\"id\":101,\"timestamp\":\"2026-11-14T08:53:45.899391+00:00\",\"actor\":\"token:f424ac74c12e\",\"action\":\"http_request\",\"resource\":\"/audit\",\"status\":\"200\",\"details\":",
+   "module": "seamtech_search/api.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/approvals",
+   "chemin": "/approvals",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/approvals",
+   "chemin": "/approvals",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/approvals",
+   "chemin": "/approvals",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/approvals",
+   "chemin": "/approvals",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/approvals",
+   "chemin": "/approvals",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Approbations disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables approval_requests/in_app_notifications n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/approvals",
+   "chemin": "/approvals",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/approvals",
+   "chemin": "/approvals",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Approbations disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables approval_requests/in_app_notifications n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/approvals",
+   "chemin": "/approvals",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Approbations disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables approval_requests/in_app_notifications n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/approvals/{id_demande}",
+   "chemin": "/approvals/1",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Approbations disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables approval_requests/in_app_notifications n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/approvals/{id_demande}",
+   "chemin": "/approvals/1",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/approvals/{id_demande}",
+   "chemin": "/approvals/pas-un-nombre",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_demande\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/approvals/{id_demande}",
+   "chemin": "/approvals/999999",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Approbations disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables approval_requests/in_app_notifications n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/approvals/{id_demande}/decide",
+   "chemin": "/approvals/1/decide",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/approvals/{id_demande}/decide",
+   "chemin": "/approvals/1/decide",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/approvals/{id_demande}/decide",
+   "chemin": "/approvals/pas-un-nombre/decide",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_demande\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"},{\"type\":\"missing\",\"loc\":[\"body\"],\"ms",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/approvals/{id_demande}/decide",
+   "chemin": "/approvals/999999/decide",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/approvals/{id_demande}/annuler",
+   "chemin": "/approvals/1/annuler",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Approbations disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables approval_requests/in_app_notifications n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/approvals/{id_demande}/annuler",
+   "chemin": "/approvals/1/annuler",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/approvals/{id_demande}/annuler",
+   "chemin": "/approvals/pas-un-nombre/annuler",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_demande\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/approvals/{id_demande}/annuler",
+   "chemin": "/approvals/999999/annuler",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Approbations disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables approval_requests/in_app_notifications n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/notifications",
+   "chemin": "/notifications",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Approbations disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables approval_requests/in_app_notifications n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/notifications",
+   "chemin": "/notifications",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/notifications",
+   "chemin": "/notifications",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Approbations disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables approval_requests/in_app_notifications n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/notifications",
+   "chemin": "/notifications",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Approbations disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables approval_requests/in_app_notifications n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/notifications/tout-lire",
+   "chemin": "/notifications/tout-lire",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Approbations disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables approval_requests/in_app_notifications n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/notifications/tout-lire",
+   "chemin": "/notifications/tout-lire",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/notifications/tout-lire",
+   "chemin": "/notifications/tout-lire",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Approbations disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables approval_requests/in_app_notifications n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/notifications/tout-lire",
+   "chemin": "/notifications/tout-lire",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Approbations disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables approval_requests/in_app_notifications n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/notifications/{id_notification}/lu",
+   "chemin": "/notifications/1/lu",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Approbations disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables approval_requests/in_app_notifications n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/notifications/{id_notification}/lu",
+   "chemin": "/notifications/1/lu",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/notifications/{id_notification}/lu",
+   "chemin": "/notifications/pas-un-nombre/lu",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_notification\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/notifications/{id_notification}/lu",
+   "chemin": "/notifications/999999/lu",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Approbations disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables approval_requests/in_app_notifications n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/approbations.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/assistant",
+   "chemin": "/assistant",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":{\"etat\":\"indisponible\",\"message\":\"L'assistant sourcé exige la couche métier PostgreSQL (§17.1). Mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}}",
+   "module": "seamtech_search/assistant.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/assistant",
+   "chemin": "/assistant",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/assistant.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/assistant",
+   "chemin": "/assistant",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/assistant.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/assistant",
+   "chemin": "/assistant",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/assistant.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/assistant/etat",
+   "chemin": "/assistant/etat",
+   "sonde": "nominal",
+   "statut": 200,
+   "extrait": "{\"etat\":\"occupe\",\"postgres\":false}",
+   "module": "seamtech_search/assistant.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/assistant/etat",
+   "chemin": "/assistant/etat",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/assistant.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/assistant/etat",
+   "chemin": "/assistant/etat",
+   "sonde": "paramètre invalide",
+   "statut": 200,
+   "extrait": "{\"etat\":\"occupe\",\"postgres\":false}",
+   "module": "seamtech_search/assistant.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/assistant/etat",
+   "chemin": "/assistant/etat",
+   "sonde": "ressource absente",
+   "statut": 200,
+   "extrait": "{\"etat\":\"occupe\",\"postgres\":false}",
+   "module": "seamtech_search/assistant.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/comparaison-voiles/candidats",
+   "chemin": "/comparaison-voiles/candidats",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"id_extraction\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comparaison_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/comparaison-voiles/candidats",
+   "chemin": "/comparaison-voiles/candidats",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/comparaison_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/comparaison-voiles/candidats",
+   "chemin": "/comparaison-voiles/candidats",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"id_extraction\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comparaison_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/comparaison-voiles/candidats",
+   "chemin": "/comparaison-voiles/candidats",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"id_extraction\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comparaison_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/comparaison-voiles",
+   "chemin": "/comparaison-voiles",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"a\"],\"msg\":\"Field required\",\"input\":null},{\"type\":\"missing\",\"loc\":[\"query\",\"b\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comparaison_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/comparaison-voiles",
+   "chemin": "/comparaison-voiles",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/comparaison_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/comparaison-voiles",
+   "chemin": "/comparaison-voiles",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"a\"],\"msg\":\"Field required\",\"input\":null},{\"type\":\"missing\",\"loc\":[\"query\",\"b\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comparaison_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/comparaison-voiles",
+   "chemin": "/comparaison-voiles",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"a\"],\"msg\":\"Field required\",\"input\":null},{\"type\":\"missing\",\"loc\":[\"query\",\"b\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comparaison_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/comparaison-voiles/plusieurs",
+   "chemin": "/comparaison-voiles/plusieurs",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"ids\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comparaison_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/comparaison-voiles/plusieurs",
+   "chemin": "/comparaison-voiles/plusieurs",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/comparaison_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/comparaison-voiles/plusieurs",
+   "chemin": "/comparaison-voiles/plusieurs",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"ids\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comparaison_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/comparaison-voiles/plusieurs",
+   "chemin": "/comparaison-voiles/plusieurs",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"ids\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comparaison_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/connexion",
+   "chemin": "/auth/connexion",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Comptes nominatifs disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : utilisateur/session_ui n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/connexion",
+   "chemin": "/auth/connexion",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/connexion",
+   "chemin": "/auth/connexion",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/connexion",
+   "chemin": "/auth/connexion",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/deconnexion",
+   "chemin": "/auth/deconnexion",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/deconnexion",
+   "chemin": "/auth/deconnexion",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/deconnexion",
+   "chemin": "/auth/deconnexion",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/deconnexion",
+   "chemin": "/auth/deconnexion",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/deconnexion-tout",
+   "chemin": "/auth/deconnexion-tout",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Comptes nominatifs disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : utilisateur/session_ui n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/deconnexion-tout",
+   "chemin": "/auth/deconnexion-tout",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/deconnexion-tout",
+   "chemin": "/auth/deconnexion-tout",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Comptes nominatifs disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : utilisateur/session_ui n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/deconnexion-tout",
+   "chemin": "/auth/deconnexion-tout",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Comptes nominatifs disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : utilisateur/session_ui n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/auth/session",
+   "chemin": "/auth/session",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Comptes nominatifs disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : utilisateur/session_ui n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/auth/session",
+   "chemin": "/auth/session",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/auth/session",
+   "chemin": "/auth/session",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Comptes nominatifs disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : utilisateur/session_ui n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/auth/session",
+   "chemin": "/auth/session",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Comptes nominatifs disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : utilisateur/session_ui n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/mot-de-passe",
+   "chemin": "/auth/mot-de-passe",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/mot-de-passe",
+   "chemin": "/auth/mot-de-passe",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/mot-de-passe",
+   "chemin": "/auth/mot-de-passe",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/mot-de-passe",
+   "chemin": "/auth/mot-de-passe",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/auth/utilisateurs",
+   "chemin": "/auth/utilisateurs",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Comptes nominatifs disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : utilisateur/session_ui n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/auth/utilisateurs",
+   "chemin": "/auth/utilisateurs",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/auth/utilisateurs",
+   "chemin": "/auth/utilisateurs",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Comptes nominatifs disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : utilisateur/session_ui n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/auth/utilisateurs",
+   "chemin": "/auth/utilisateurs",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Comptes nominatifs disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : utilisateur/session_ui n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/utilisateurs",
+   "chemin": "/auth/utilisateurs",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/utilisateurs",
+   "chemin": "/auth/utilisateurs",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/utilisateurs",
+   "chemin": "/auth/utilisateurs",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/utilisateurs",
+   "chemin": "/auth/utilisateurs",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/utilisateurs/{identifiant}/role",
+   "chemin": "/auth/utilisateurs/approbateur-de-recette/role",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/utilisateurs/{identifiant}/role",
+   "chemin": "/auth/utilisateurs/approbateur-de-recette/role",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/utilisateurs/{identifiant}/role",
+   "chemin": "/auth/utilisateurs/pas-un-nombre/role",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/utilisateurs/{identifiant}/role",
+   "chemin": "/auth/utilisateurs/999999/role",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/utilisateurs/{identifiant}/desactiver",
+   "chemin": "/auth/utilisateurs/approbateur-de-recette/desactiver",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Comptes nominatifs disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : utilisateur/session_ui n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/utilisateurs/{identifiant}/desactiver",
+   "chemin": "/auth/utilisateurs/approbateur-de-recette/desactiver",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/utilisateurs/{identifiant}/desactiver",
+   "chemin": "/auth/utilisateurs/pas-un-nombre/desactiver",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Comptes nominatifs disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : utilisateur/session_ui n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/utilisateurs/{identifiant}/desactiver",
+   "chemin": "/auth/utilisateurs/999999/desactiver",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Comptes nominatifs disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : utilisateur/session_ui n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/utilisateurs/{identifiant}/mot-de-passe",
+   "chemin": "/auth/utilisateurs/approbateur-de-recette/mot-de-passe",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/utilisateurs/{identifiant}/mot-de-passe",
+   "chemin": "/auth/utilisateurs/approbateur-de-recette/mot-de-passe",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/utilisateurs/{identifiant}/mot-de-passe",
+   "chemin": "/auth/utilisateurs/pas-un-nombre/mot-de-passe",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/auth/utilisateurs/{identifiant}/mot-de-passe",
+   "chemin": "/auth/utilisateurs/999999/mot-de-passe",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/comptes/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/confiance-reutilisation/evaluer",
+   "chemin": "/confiance-reutilisation/evaluer",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Confiance de réutilisation disponible sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions et evaluations_confiance n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/confiance_reutilisation_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/confiance-reutilisation/evaluer",
+   "chemin": "/confiance-reutilisation/evaluer",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/confiance_reutilisation_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/confiance-reutilisation/evaluer",
+   "chemin": "/confiance-reutilisation/evaluer",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Confiance de réutilisation disponible sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions et evaluations_confiance n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/confiance_reutilisation_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/confiance-reutilisation/evaluer",
+   "chemin": "/confiance-reutilisation/evaluer",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Confiance de réutilisation disponible sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions et evaluations_confiance n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/confiance_reutilisation_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/confiance-reutilisation/cible",
+   "chemin": "/confiance-reutilisation/cible",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Confiance de réutilisation disponible sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions et evaluations_confiance n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/confiance_reutilisation_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/confiance-reutilisation/cible",
+   "chemin": "/confiance-reutilisation/cible",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/confiance_reutilisation_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/confiance-reutilisation/cible",
+   "chemin": "/confiance-reutilisation/cible",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Confiance de réutilisation disponible sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions et evaluations_confiance n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/confiance_reutilisation_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/confiance-reutilisation/cible",
+   "chemin": "/confiance-reutilisation/cible",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Confiance de réutilisation disponible sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions et evaluations_confiance n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/confiance_reutilisation_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/confiance-reutilisation/evaluations",
+   "chemin": "/confiance-reutilisation/evaluations",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"id_extraction\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/confiance_reutilisation_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/confiance-reutilisation/evaluations",
+   "chemin": "/confiance-reutilisation/evaluations",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/confiance_reutilisation_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/confiance-reutilisation/evaluations",
+   "chemin": "/confiance-reutilisation/evaluations",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"id_extraction\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/confiance_reutilisation_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/confiance-reutilisation/evaluations",
+   "chemin": "/confiance-reutilisation/evaluations",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"id_extraction\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/confiance_reutilisation_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/confiance-reutilisation/population",
+   "chemin": "/confiance-reutilisation/population",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"boat_model_id\"],\"msg\":\"Field required\",\"input\":null},{\"type\":\"missing\",\"loc\":[\"query\",\"type_voile\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/confiance_reutilisation_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/confiance-reutilisation/population",
+   "chemin": "/confiance-reutilisation/population",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/confiance_reutilisation_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/confiance-reutilisation/population",
+   "chemin": "/confiance-reutilisation/population",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"boat_model_id\"],\"msg\":\"Field required\",\"input\":null},{\"type\":\"missing\",\"loc\":[\"query\",\"type_voile\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/confiance_reutilisation_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/confiance-reutilisation/population",
+   "chemin": "/confiance-reutilisation/population",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"boat_model_id\"],\"msg\":\"Field required\",\"input\":null},{\"type\":\"missing\",\"loc\":[\"query\",\"type_voile\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/confiance_reutilisation_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/doublons",
+   "chemin": "/fiches/doublons",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Détection de doublons disponible sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : les tables fiche*/fiche_lien n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/dedup/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/doublons",
+   "chemin": "/fiches/doublons",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/dedup/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/doublons",
+   "chemin": "/fiches/doublons",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Détection de doublons disponible sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : les tables fiche*/fiche_lien n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/dedup/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/doublons",
+   "chemin": "/fiches/doublons",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Détection de doublons disponible sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : les tables fiche*/fiche_lien n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/dedup/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/doublons/scan",
+   "chemin": "/fiches/doublons/scan",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Détection de doublons disponible sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : les tables fiche*/fiche_lien n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/dedup/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/doublons/scan",
+   "chemin": "/fiches/doublons/scan",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/dedup/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/doublons/scan",
+   "chemin": "/fiches/doublons/scan",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Détection de doublons disponible sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : les tables fiche*/fiche_lien n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/dedup/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/doublons/scan",
+   "chemin": "/fiches/doublons/scan",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Détection de doublons disponible sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : les tables fiche*/fiche_lien n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/dedup/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/doublons",
+   "chemin": "/fiches/RECETTE-1/doublons",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Détection de doublons disponible sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : les tables fiche*/fiche_lien n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/dedup/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/doublons",
+   "chemin": "/fiches/RECETTE-1/doublons",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/dedup/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/doublons",
+   "chemin": "/fiches/pas-un-nombre/doublons",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Détection de doublons disponible sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : les tables fiche*/fiche_lien n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/dedup/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/doublons",
+   "chemin": "/fiches/999999/doublons",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Détection de doublons disponible sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : les tables fiche*/fiche_lien n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/dedup/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/validation/doublons",
+   "chemin": "/validation/doublons",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/dedup/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/validation/doublons",
+   "chemin": "/validation/doublons",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/dedup/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/validation/doublons",
+   "chemin": "/validation/doublons",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/dedup/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/validation/doublons",
+   "chemin": "/validation/doublons",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/dedup/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/extractions-voile",
+   "chemin": "/extractions-voile",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Extractions de voiles disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/extractions-voile",
+   "chemin": "/extractions-voile",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/extractions-voile",
+   "chemin": "/extractions-voile",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Extractions de voiles disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/extractions-voile",
+   "chemin": "/extractions-voile",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Extractions de voiles disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/extractions-voile/resoudre-lot",
+   "chemin": "/extractions-voile/resoudre-lot",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Extractions de voiles disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/extractions-voile/resoudre-lot",
+   "chemin": "/extractions-voile/resoudre-lot",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/extractions-voile/resoudre-lot",
+   "chemin": "/extractions-voile/resoudre-lot",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Extractions de voiles disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/extractions-voile/resoudre-lot",
+   "chemin": "/extractions-voile/resoudre-lot",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Extractions de voiles disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/extractions-voile/{id_extraction}",
+   "chemin": "/extractions-voile/1",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Extractions de voiles disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/extractions-voile/{id_extraction}",
+   "chemin": "/extractions-voile/1",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/extractions-voile/{id_extraction}",
+   "chemin": "/extractions-voile/pas-un-nombre",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_extraction\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/extractions-voile/{id_extraction}",
+   "chemin": "/extractions-voile/999999",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Extractions de voiles disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/extractions-voile/{id_extraction}/resoudre",
+   "chemin": "/extractions-voile/1/resoudre",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Extractions de voiles disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/extractions-voile/{id_extraction}/resoudre",
+   "chemin": "/extractions-voile/1/resoudre",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/extractions-voile/{id_extraction}/resoudre",
+   "chemin": "/extractions-voile/pas-un-nombre/resoudre",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_extraction\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/extractions-voile/{id_extraction}/resoudre",
+   "chemin": "/extractions-voile/999999/resoudre",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Extractions de voiles disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/extractions-voile/{id_extraction}/lier",
+   "chemin": "/extractions-voile/1/lier",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Extractions de voiles disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/extractions-voile/{id_extraction}/lier",
+   "chemin": "/extractions-voile/1/lier",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/extractions-voile/{id_extraction}/lier",
+   "chemin": "/extractions-voile/pas-un-nombre/lier",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_extraction\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/extractions-voile/{id_extraction}/lier",
+   "chemin": "/extractions-voile/999999/lier",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Extractions de voiles disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/extractions-voile/{id_extraction}/corriger",
+   "chemin": "/extractions-voile/1/corriger",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Extractions de voiles disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/extractions-voile/{id_extraction}/corriger",
+   "chemin": "/extractions-voile/1/corriger",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/extractions-voile/{id_extraction}/corriger",
+   "chemin": "/extractions-voile/pas-un-nombre/corriger",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_extraction\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/extractions-voile/{id_extraction}/corriger",
+   "chemin": "/extractions-voile/999999/corriger",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Extractions de voiles disponibles sur PostgreSQL uniquement (décision de couche §17.1) : les tables sail_extractions n'existent pas côté SQLite.\"}",
+   "module": "seamtech_search/extractions_voile_routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/pieces",
+   "chemin": "/pieces",
+   "sonde": "nominal",
+   "statut": 200,
+   "extrait": "{\"total\":0,\"limit\":100,\"offset\":0,\"has_more\":false,\"pieces\":[],\"extensions\":[],\"dossiers\":[]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/pieces",
+   "chemin": "/pieces",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/pieces",
+   "chemin": "/pieces",
+   "sonde": "paramètre invalide",
+   "statut": 200,
+   "extrait": "{\"total\":0,\"limit\":100,\"offset\":0,\"has_more\":false,\"pieces\":[],\"extensions\":[],\"dossiers\":[]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/pieces",
+   "chemin": "/pieces",
+   "sonde": "ressource absente",
+   "statut": 200,
+   "extrait": "{\"total\":0,\"limit\":100,\"offset\":0,\"has_more\":false,\"pieces\":[],\"extensions\":[],\"dossiers\":[]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/pieces/{piece_id}/apercu",
+   "chemin": "/pieces/1/apercu",
+   "sonde": "nominal",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Fichier inconnu.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/pieces/{piece_id}/apercu",
+   "chemin": "/pieces/1/apercu",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/pieces/{piece_id}/apercu",
+   "chemin": "/pieces/pas-un-nombre/apercu",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"piece_id\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/pieces/{piece_id}/apercu",
+   "chemin": "/pieces/999999/apercu",
+   "sonde": "ressource absente",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Fichier inconnu.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "HEAD",
+   "modele": "/pieces/{piece_id}/apercu",
+   "chemin": "/pieces/1/apercu",
+   "sonde": "nominal",
+   "statut": 404,
+   "extrait": "",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "HEAD",
+   "modele": "/pieces/{piece_id}/apercu",
+   "chemin": "/pieces/1/apercu",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "HEAD",
+   "modele": "/pieces/{piece_id}/apercu",
+   "chemin": "/pieces/pas-un-nombre/apercu",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "HEAD",
+   "modele": "/pieces/{piece_id}/apercu",
+   "chemin": "/pieces/999999/apercu",
+   "sonde": "ressource absente",
+   "statut": 404,
+   "extrait": "",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/pieces/{piece_id}/telecharger",
+   "chemin": "/pieces/1/telecharger",
+   "sonde": "nominal",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Fichier inconnu.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/pieces/{piece_id}/telecharger",
+   "chemin": "/pieces/1/telecharger",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/pieces/{piece_id}/telecharger",
+   "chemin": "/pieces/pas-un-nombre/telecharger",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"piece_id\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/pieces/{piece_id}/telecharger",
+   "chemin": "/pieces/999999/telecharger",
+   "sonde": "ressource absente",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Fichier inconnu.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "HEAD",
+   "modele": "/pieces/{piece_id}/telecharger",
+   "chemin": "/pieces/1/telecharger",
+   "sonde": "nominal",
+   "statut": 404,
+   "extrait": "",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "HEAD",
+   "modele": "/pieces/{piece_id}/telecharger",
+   "chemin": "/pieces/1/telecharger",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "HEAD",
+   "modele": "/pieces/{piece_id}/telecharger",
+   "chemin": "/pieces/pas-un-nombre/telecharger",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "HEAD",
+   "modele": "/pieces/{piece_id}/telecharger",
+   "chemin": "/pieces/999999/telecharger",
+   "sonde": "ressource absente",
+   "statut": 404,
+   "extrait": "",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}",
+   "chemin": "/fiches/RECETTE-1",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}",
+   "chemin": "/fiches/RECETTE-1",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}",
+   "chemin": "/fiches/pas-un-nombre",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}",
+   "chemin": "/fiches/999999",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/historique",
+   "chemin": "/fiches/RECETTE-1/historique",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/historique",
+   "chemin": "/fiches/RECETTE-1/historique",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/historique",
+   "chemin": "/fiches/pas-un-nombre/historique",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/historique",
+   "chemin": "/fiches/999999/historique",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/champs",
+   "chemin": "/fiches/RECETTE-1/champs",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/champs",
+   "chemin": "/fiches/RECETTE-1/champs",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/champs",
+   "chemin": "/fiches/pas-un-nombre/champs",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/champs",
+   "chemin": "/fiches/999999/champs",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/etat",
+   "chemin": "/fiches/RECETTE-1/etat",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/etat",
+   "chemin": "/fiches/RECETTE-1/etat",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/etat",
+   "chemin": "/fiches/pas-un-nombre/etat",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/etat",
+   "chemin": "/fiches/999999/etat",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/gabarits",
+   "chemin": "/gabarits",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/gabarits",
+   "chemin": "/gabarits",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/gabarits",
+   "chemin": "/gabarits",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/gabarits",
+   "chemin": "/gabarits",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/gabarits/{code}/versions",
+   "chemin": "/gabarits/RECETTE-1/versions",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/gabarits/{code}/versions",
+   "chemin": "/gabarits/RECETTE-1/versions",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/gabarits/{code}/versions",
+   "chemin": "/gabarits/pas-un-nombre/versions",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/gabarits/{code}/versions",
+   "chemin": "/gabarits/999999/versions",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/gabarits/{code}/versions",
+   "chemin": "/gabarits/RECETTE-1/versions",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/gabarits/{code}/versions",
+   "chemin": "/gabarits/RECETTE-1/versions",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/gabarits/{code}/versions",
+   "chemin": "/gabarits/pas-un-nombre/versions",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/gabarits/{code}/versions",
+   "chemin": "/gabarits/999999/versions",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/imports/dossier/televersements/capacites",
+   "chemin": "/imports/dossier/televersements/capacites",
+   "sonde": "nominal",
+   "statut": 200,
+   "extrait": "{\"creation_idempotente\":1}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/imports/dossier/televersements/capacites",
+   "chemin": "/imports/dossier/televersements/capacites",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/imports/dossier/televersements/capacites",
+   "chemin": "/imports/dossier/televersements/capacites",
+   "sonde": "paramètre invalide",
+   "statut": 200,
+   "extrait": "{\"creation_idempotente\":1}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/imports/dossier/televersements/capacites",
+   "chemin": "/imports/dossier/televersements/capacites",
+   "sonde": "ressource absente",
+   "statut": 200,
+   "extrait": "{\"creation_idempotente\":1}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/televersements/v2",
+   "chemin": "/imports/dossier/televersements/v2",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/televersements/v2",
+   "chemin": "/imports/dossier/televersements/v2",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/televersements/v2",
+   "chemin": "/imports/dossier/televersements/v2",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/televersements/v2",
+   "chemin": "/imports/dossier/televersements/v2",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/televersements",
+   "chemin": "/imports/dossier/televersements",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/televersements",
+   "chemin": "/imports/dossier/televersements",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/televersements",
+   "chemin": "/imports/dossier/televersements",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/televersements",
+   "chemin": "/imports/dossier/televersements",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/imports/dossier/televersements/{jeton_session}",
+   "chemin": "/imports/dossier/televersements/session-de-recette",
+   "sonde": "nominal",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Session de téléversement inconnue.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/imports/dossier/televersements/{jeton_session}",
+   "chemin": "/imports/dossier/televersements/session-de-recette",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/imports/dossier/televersements/{jeton_session}",
+   "chemin": "/imports/dossier/televersements/pas-un-nombre",
+   "sonde": "paramètre invalide",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Session de téléversement inconnue.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/imports/dossier/televersements/{jeton_session}",
+   "chemin": "/imports/dossier/televersements/999999",
+   "sonde": "ressource absente",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Session de téléversement inconnue.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/televersements/{jeton_session}/fichiers",
+   "chemin": "/imports/dossier/televersements/session-de-recette/fichiers",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\",\"chemins\"],\"msg\":\"Field required\",\"input\":null},{\"type\":\"missing\",\"loc\":[\"body\",\"fichiers\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/televersements/{jeton_session}/fichiers",
+   "chemin": "/imports/dossier/televersements/session-de-recette/fichiers",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/televersements/{jeton_session}/fichiers",
+   "chemin": "/imports/dossier/televersements/pas-un-nombre/fichiers",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\",\"chemins\"],\"msg\":\"Field required\",\"input\":null},{\"type\":\"missing\",\"loc\":[\"body\",\"fichiers\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/televersements/{jeton_session}/fichiers",
+   "chemin": "/imports/dossier/televersements/999999/fichiers",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\",\"chemins\"],\"msg\":\"Field required\",\"input\":null},{\"type\":\"missing\",\"loc\":[\"body\",\"fichiers\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/televersements/{jeton_session}/terminer",
+   "chemin": "/imports/dossier/televersements/session-de-recette/terminer",
+   "sonde": "nominal",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Session de téléversement inconnue.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/televersements/{jeton_session}/terminer",
+   "chemin": "/imports/dossier/televersements/session-de-recette/terminer",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/televersements/{jeton_session}/terminer",
+   "chemin": "/imports/dossier/televersements/pas-un-nombre/terminer",
+   "sonde": "paramètre invalide",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Session de téléversement inconnue.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/televersements/{jeton_session}/terminer",
+   "chemin": "/imports/dossier/televersements/999999/terminer",
+   "sonde": "ressource absente",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Session de téléversement inconnue.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "DELETE",
+   "modele": "/imports/dossier/televersements/{jeton_session}",
+   "chemin": "/imports/dossier/televersements/session-de-recette",
+   "sonde": "nominal",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Session de téléversement inconnue.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "DELETE",
+   "modele": "/imports/dossier/televersements/{jeton_session}",
+   "chemin": "/imports/dossier/televersements/session-de-recette",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "DELETE",
+   "modele": "/imports/dossier/televersements/{jeton_session}",
+   "chemin": "/imports/dossier/televersements/pas-un-nombre",
+   "sonde": "paramètre invalide",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Session de téléversement inconnue.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "DELETE",
+   "modele": "/imports/dossier/televersements/{jeton_session}",
+   "chemin": "/imports/dossier/televersements/999999",
+   "sonde": "ressource absente",
+   "statut": 404,
+   "extrait": "{\"detail\":\"Session de téléversement inconnue.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/{id_import}/creer-fiche",
+   "chemin": "/imports/1/creer-fiche",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/{id_import}/creer-fiche",
+   "chemin": "/imports/1/creer-fiche",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/{id_import}/creer-fiche",
+   "chemin": "/imports/pas-un-nombre/creer-fiche",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/{id_import}/creer-fiche",
+   "chemin": "/imports/999999/creer-fiche",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier",
+   "chemin": "/imports/dossier",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier",
+   "chemin": "/imports/dossier",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier",
+   "chemin": "/imports/dossier",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier",
+   "chemin": "/imports/dossier",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/lot",
+   "chemin": "/imports/dossier/lot",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/lot",
+   "chemin": "/imports/dossier/lot",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/lot",
+   "chemin": "/imports/dossier/lot",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/imports/dossier/lot",
+   "chemin": "/imports/dossier/lot",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/lots",
+   "chemin": "/lots",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/lots",
+   "chemin": "/lots",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/lots",
+   "chemin": "/lots",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/lots",
+   "chemin": "/lots",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/lots/{id_lot}",
+   "chemin": "/lots/1",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/lots/{id_lot}",
+   "chemin": "/lots/1",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/lots/{id_lot}",
+   "chemin": "/lots/pas-un-nombre",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_lot\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/lots/{id_lot}",
+   "chemin": "/lots/999999",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/lots/{id_lot}/annuler",
+   "chemin": "/lots/1/annuler",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/lots/{id_lot}/annuler",
+   "chemin": "/lots/1/annuler",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/lots/{id_lot}/annuler",
+   "chemin": "/lots/pas-un-nombre/annuler",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_lot\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/lots/{id_lot}/annuler",
+   "chemin": "/lots/999999/annuler",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/corrections/divergences",
+   "chemin": "/fiches/corrections/divergences",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/corrections/divergences",
+   "chemin": "/fiches/corrections/divergences",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/corrections/divergences",
+   "chemin": "/fiches/corrections/divergences",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/corrections/divergences",
+   "chemin": "/fiches/corrections/divergences",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/reconcilier-corrections",
+   "chemin": "/fiches/RECETTE-1/reconcilier-corrections",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/reconcilier-corrections",
+   "chemin": "/fiches/RECETTE-1/reconcilier-corrections",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/reconcilier-corrections",
+   "chemin": "/fiches/pas-un-nombre/reconcilier-corrections",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/reconcilier-corrections",
+   "chemin": "/fiches/999999/reconcilier-corrections",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/gabarits/detecter",
+   "chemin": "/gabarits/detecter",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/gabarits/detecter",
+   "chemin": "/gabarits/detecter",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/gabarits/detecter",
+   "chemin": "/gabarits/detecter",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/gabarits/detecter",
+   "chemin": "/gabarits/detecter",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/corriger",
+   "chemin": "/fiches/RECETTE-1/corriger",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/corriger",
+   "chemin": "/fiches/RECETTE-1/corriger",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/corriger",
+   "chemin": "/fiches/pas-un-nombre/corriger",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/corriger",
+   "chemin": "/fiches/999999/corriger",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/valider",
+   "chemin": "/fiches/RECETTE-1/valider",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/valider",
+   "chemin": "/fiches/RECETTE-1/valider",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/valider",
+   "chemin": "/fiches/pas-un-nombre/valider",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/valider",
+   "chemin": "/fiches/999999/valider",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/rejeter",
+   "chemin": "/fiches/RECETTE-1/rejeter",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/rejeter",
+   "chemin": "/fiches/RECETTE-1/rejeter",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/rejeter",
+   "chemin": "/fiches/pas-un-nombre/rejeter",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/rejeter",
+   "chemin": "/fiches/999999/rejeter",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/rouvrir",
+   "chemin": "/fiches/RECETTE-1/rouvrir",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/rouvrir",
+   "chemin": "/fiches/RECETTE-1/rouvrir",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/rouvrir",
+   "chemin": "/fiches/pas-un-nombre/rouvrir",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/fiches/{code}/rouvrir",
+   "chemin": "/fiches/999999/rouvrir",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/validation/file",
+   "chemin": "/validation/file",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/validation/file",
+   "chemin": "/validation/file",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/validation/file",
+   "chemin": "/validation/file",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/validation/file",
+   "chemin": "/validation/file",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/validation/lot",
+   "chemin": "/validation/lot",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/validation/lot",
+   "chemin": "/validation/lot",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/validation/lot",
+   "chemin": "/validation/lot",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/validation/lot",
+   "chemin": "/validation/lot",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches",
+   "chemin": "/fiches",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches",
+   "chemin": "/fiches",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches",
+   "chemin": "/fiches",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches",
+   "chemin": "/fiches",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/pieces",
+   "chemin": "/fiches/RECETTE-1/pieces",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/pieces",
+   "chemin": "/fiches/RECETTE-1/pieces",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/pieces",
+   "chemin": "/fiches/pas-un-nombre/pieces",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/fiches/{code}/pieces",
+   "chemin": "/fiches/999999/pieces",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/gabarits/brouillon/from-pdf",
+   "chemin": "/gabarits/brouillon/from-pdf",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/gabarits/brouillon/from-pdf",
+   "chemin": "/gabarits/brouillon/from-pdf",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/gabarits/brouillon/from-pdf",
+   "chemin": "/gabarits/brouillon/from-pdf",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/gabarits/brouillon/from-pdf",
+   "chemin": "/gabarits/brouillon/from-pdf",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/gabarits/brouillons",
+   "chemin": "/gabarits/brouillons",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/gabarits/brouillons",
+   "chemin": "/gabarits/brouillons",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/gabarits/brouillons",
+   "chemin": "/gabarits/brouillons",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/gabarits/brouillons",
+   "chemin": "/gabarits/brouillons",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/gabarits/brouillons/{id_brouillon}",
+   "chemin": "/gabarits/brouillons/1",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/gabarits/brouillons/{id_brouillon}",
+   "chemin": "/gabarits/brouillons/1",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/gabarits/brouillons/{id_brouillon}",
+   "chemin": "/gabarits/brouillons/pas-un-nombre",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_brouillon\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/gabarits/brouillons/{id_brouillon}",
+   "chemin": "/gabarits/brouillons/999999",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/gabarits/brouillons/{id_brouillon}/valider",
+   "chemin": "/gabarits/brouillons/1/valider",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/gabarits/brouillons/{id_brouillon}/valider",
+   "chemin": "/gabarits/brouillons/1/valider",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/gabarits/brouillons/{id_brouillon}/valider",
+   "chemin": "/gabarits/brouillons/pas-un-nombre/valider",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_brouillon\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/gabarits/brouillons/{id_brouillon}/valider",
+   "chemin": "/gabarits/brouillons/999999/valider",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tables fiche_*/gabarit disponibles sur PostgreSQL uniquement (décision de couche §17.1 du plan v3.0) : configurer database_url (migrations 006-009).\"}",
+   "module": "seamtech_search/fiches/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/ml/modeles",
+   "chemin": "/ml/modeles",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Les endpoints /ml exigent la couche métier PostgreSQL (§17.1).\"}",
+   "module": "seamtech_search/ml/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/ml/modeles",
+   "chemin": "/ml/modeles",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/ml/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/ml/modeles",
+   "chemin": "/ml/modeles",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Les endpoints /ml exigent la couche métier PostgreSQL (§17.1).\"}",
+   "module": "seamtech_search/ml/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/ml/modeles",
+   "chemin": "/ml/modeles",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Les endpoints /ml exigent la couche métier PostgreSQL (§17.1).\"}",
+   "module": "seamtech_search/ml/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/ml/modeles",
+   "chemin": "/ml/modeles",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/ml/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/ml/modeles",
+   "chemin": "/ml/modeles",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/ml/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/ml/modeles",
+   "chemin": "/ml/modeles",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/ml/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/ml/modeles",
+   "chemin": "/ml/modeles",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/ml/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/ml/entrainer",
+   "chemin": "/ml/entrainer",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Les endpoints /ml exigent la couche métier PostgreSQL (§17.1).\"}",
+   "module": "seamtech_search/ml/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/ml/entrainer",
+   "chemin": "/ml/entrainer",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/ml/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/ml/entrainer",
+   "chemin": "/ml/entrainer",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Les endpoints /ml exigent la couche métier PostgreSQL (§17.1).\"}",
+   "module": "seamtech_search/ml/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/ml/entrainer",
+   "chemin": "/ml/entrainer",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Les endpoints /ml exigent la couche métier PostgreSQL (§17.1).\"}",
+   "module": "seamtech_search/ml/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/ml/peupler",
+   "chemin": "/ml/peupler",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Les endpoints /ml exigent la couche métier PostgreSQL (§17.1).\"}",
+   "module": "seamtech_search/ml/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/ml/peupler",
+   "chemin": "/ml/peupler",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/ml/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/ml/peupler",
+   "chemin": "/ml/peupler",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Les endpoints /ml exigent la couche métier PostgreSQL (§17.1).\"}",
+   "module": "seamtech_search/ml/routes.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/ml/peupler",
+   "chemin": "/ml/peupler",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Les endpoints /ml exigent la couche métier PostgreSQL (§17.1).\"}",
+   "module": "seamtech_search/ml/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/qualite/tableau-de-bord",
+   "chemin": "/qualite/tableau-de-bord",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tableau qualité disponible sur PostgreSQL uniquement (migrations 006-009).\"}",
+   "module": "seamtech_search/qualite/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/qualite/tableau-de-bord",
+   "chemin": "/qualite/tableau-de-bord",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/qualite/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/qualite/tableau-de-bord",
+   "chemin": "/qualite/tableau-de-bord",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tableau qualité disponible sur PostgreSQL uniquement (migrations 006-009).\"}",
+   "module": "seamtech_search/qualite/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/qualite/tableau-de-bord",
+   "chemin": "/qualite/tableau-de-bord",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Tableau qualité disponible sur PostgreSQL uniquement (migrations 006-009).\"}",
+   "module": "seamtech_search/qualite/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/qualite/cartographie",
+   "chemin": "/qualite/cartographie",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Cartographie disponible sur PostgreSQL uniquement (migrations 006-031).\"}",
+   "module": "seamtech_search/qualite/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/qualite/cartographie",
+   "chemin": "/qualite/cartographie",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/qualite/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/qualite/cartographie",
+   "chemin": "/qualite/cartographie",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Cartographie disponible sur PostgreSQL uniquement (migrations 006-031).\"}",
+   "module": "seamtech_search/qualite/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/qualite/cartographie",
+   "chemin": "/qualite/cartographie",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"Cartographie disponible sur PostgreSQL uniquement (migrations 006-031).\"}",
+   "module": "seamtech_search/qualite/routes.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/recherche",
+   "chemin": "/recherche",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/recherche",
+   "chemin": "/recherche",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/recherche",
+   "chemin": "/recherche",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/recherche",
+   "chemin": "/recherche",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/recherche/suggestions",
+   "chemin": "/recherche/suggestions",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/recherche/suggestions",
+   "chemin": "/recherche/suggestions",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/recherche/suggestions",
+   "chemin": "/recherche/suggestions",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/recherche/suggestions",
+   "chemin": "/recherche/suggestions",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/search/suggestions",
+   "chemin": "/search/suggestions",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/search/suggestions",
+   "chemin": "/search/suggestions",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/search/suggestions",
+   "chemin": "/search/suggestions",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/search/suggestions",
+   "chemin": "/search/suggestions",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/recherche/journal",
+   "chemin": "/recherche/journal",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/recherche/journal",
+   "chemin": "/recherche/journal",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/recherche/journal",
+   "chemin": "/recherche/journal",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/recherche/journal",
+   "chemin": "/recherche/journal",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/referentiel/bateaux",
+   "chemin": "/referentiel/bateaux",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/referentiel/bateaux",
+   "chemin": "/referentiel/bateaux",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/referentiel/bateaux",
+   "chemin": "/referentiel/bateaux",
+   "sonde": "paramètre invalide",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "GET",
+   "modele": "/referentiel/bateaux",
+   "chemin": "/referentiel/bateaux",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/referentiel/bateaux/{id_modele}/alias",
+   "chemin": "/referentiel/bateaux/1/alias",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/referentiel/bateaux/{id_modele}/alias",
+   "chemin": "/referentiel/bateaux/1/alias",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/referentiel/bateaux/{id_modele}/alias",
+   "chemin": "/referentiel/bateaux/pas-un-nombre/alias",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_modele\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"},{\"type\":\"missing\",\"loc\":[\"body\"],\"msg",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/referentiel/bateaux/{id_modele}/alias",
+   "chemin": "/referentiel/bateaux/999999/alias",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/referentiel/bateaux/{id_modele}/fusion",
+   "chemin": "/referentiel/bateaux/1/fusion",
+   "sonde": "nominal",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/referentiel/bateaux/{id_modele}/fusion",
+   "chemin": "/referentiel/bateaux/1/fusion",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/referentiel/bateaux/{id_modele}/fusion",
+   "chemin": "/referentiel/bateaux/pas-un-nombre/fusion",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_modele\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"},{\"type\":\"missing\",\"loc\":[\"body\"],\"msg",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/referentiel/bateaux/{id_modele}/fusion",
+   "chemin": "/referentiel/bateaux/999999/fusion",
+   "sonde": "ressource absente",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/referentiel/bateaux/{id_modele}/defusion",
+   "chemin": "/referentiel/bateaux/1/defusion",
+   "sonde": "nominal",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/referentiel/bateaux/{id_modele}/defusion",
+   "chemin": "/referentiel/bateaux/1/defusion",
+   "sonde": "non autorisé",
+   "statut": 401,
+   "extrait": "{\"detail\":\"Authentication required.\"}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/referentiel/bateaux/{id_modele}/defusion",
+   "chemin": "/referentiel/bateaux/pas-un-nombre/defusion",
+   "sonde": "paramètre invalide",
+   "statut": 422,
+   "extrait": "{\"detail\":[{\"type\":\"int_parsing\",\"loc\":[\"path\",\"id_modele\"],\"msg\":\"Input should be a valid integer, unable to parse string as an integer\",\"input\":\"pas-un-nombre\"}]}",
+   "module": "seamtech_search/recherche.py"
+  },
+  {
+   "methode": "POST",
+   "modele": "/referentiel/bateaux/{id_modele}/defusion",
+   "chemin": "/referentiel/bateaux/999999/defusion",
+   "sonde": "ressource absente",
+   "statut": 503,
+   "extrait": "{\"detail\":\"La recherche des fiches exige la couche métier PostgreSQL (§17.1). Conséquence en mode SQLite : seuls /search (fichiers) et les fonctions d'indexation restent disponibles.\"}",
+   "module": "seamtech_search/recherche.py"
+  }
+ ]
+}

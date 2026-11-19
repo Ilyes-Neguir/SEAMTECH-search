@@ -176,7 +176,7 @@ Voir `.github/workflows/ci.yml` job `hors-ligne-reel` :
 bash scripts/qualification_native.sh
 ```
 
-Détails dans `PROCEDURE_NATIVE.md` et `deliverables/qualification-deploiement/procedure_native/` : apt PG+pgvector, Redis, MinIO officiel compilé, API+worker+frontend hôtes, compte nominatif, lot worker 7792-SO, OCR hôte, /recherche, /open, sauvegarde/restore, kill+relance API, notice `native-summary`.
+Détails dans `PROCEDURE_NATIVE.md` et `deliverables/qualification-deploiement/procedure_native/` : apt PG+pgvector, Redis, MinIO officiel compilé, API+worker+frontend hôtes, compte nominatif, lot worker 1042-EX, OCR hôte, /recherche, /open, sauvegarde/restore, kill+relance API, notice `native-summary`.
 
 ## 11. CI distante — rejouer
 

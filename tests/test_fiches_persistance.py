@@ -15,20 +15,22 @@ from typing import Any, Iterator
 
 import pytest
 
+from seamtech_search.fiches import auto_validation
+from seamtech_search.fiches.auto_validation import decider_statut_arrivee
 from seamtech_search.fiches.extraction import extraire_fiche
 from seamtech_search.fiches.gabarits import GABARITS_EMBARQUES, charger_gabarits, initialiser_gabarits
-from seamtech_search.fiches.modeles import FicheExtraite
+from seamtech_search.fiches.modeles import Anomalie, FicheExtraite
 from seamtech_search.fiches.persistance import (
     ecrire_fiche,
     evaluer_verite,
-    initialiser_verite_7792,
+    initialiser_verite_reference,
     verifier_non_regression,
 )
 from seamtech_search.indexer import SearchIndex
 from tests.helpers_postgres_isole import url_base_jetable
 
 RACINE = Path(__file__).resolve().parent.parent
-PDF_7792 = RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"
+PDF_REFERENCE = RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"
 DATABASE_URL = os.environ.get("SEAMTECH_TEST_DATABASE_URL", "")
 
 pytestmark = pytest.mark.postgres
@@ -36,7 +38,7 @@ pytestmark = pytest.mark.postgres
 
 @pytest.fixture(scope="module")
 def base_fiches() -> Iterator[dict[str, Any]]:
-    """Base PostgreSQL jetable, migrations 006-009 + gabarits + vérité 7792."""
+    """Base PostgreSQL jetable, migrations 006-009 + gabarits + vérité 1042."""
     if not DATABASE_URL:
         pytest.skip("Set SEAMTECH_TEST_DATABASE_URL to run PostgreSQL integration tests")
 
@@ -56,7 +58,7 @@ def base_fiches() -> Iterator[dict[str, Any]]:
     index.initialize()
     index.run_migrations()
     initialiser_gabarits(index)
-    initialiser_verite_7792(index, PDF_7792)
+    initialiser_verite_reference(index, PDF_REFERENCE)
     try:
         yield {"index": index, "url": url_base, "nom": nom_base}
     finally:
@@ -76,8 +78,25 @@ def base_fiches() -> Iterator[dict[str, Any]]:
 
 
 @pytest.fixture(scope="module")
-def fiche_7792() -> Any:
-    return extraire_fiche(PDF_7792, gabarits=list(GABARITS_EMBARQUES))
+def fiche_reference() -> Any:
+    return extraire_fiche(PDF_REFERENCE, gabarits=list(GABARITS_EMBARQUES))
+
+
+@pytest.fixture()
+def sans_auto_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Porte le seuil d'auto-validation hors d'atteinte pour ce test.
+
+    Plusieurs tests d'écriture déposent DEUX FOIS la même fiche, ou
+    partent du principe qu'elle attend une décision humaine. Depuis
+    l'auto-validation au seuil de 90 %, une fiche au score élevé arrive
+    « valide » et RG11 la protège : ces tests mesureraient le refus RG11
+    au lieu de la mécanique qu'ils ont pour objet.
+
+    Le seuil est porté à 1,0 — inatteignable, la comparaison étant
+    STRICTE — et non contourné par un patch de la fonction : la règle
+    reste celle du produit, seul son réglage change.
+    """
+    monkeypatch.setattr(auto_validation, "SEUIL_AUTO_VALIDATION", 1.0)
 
 
 def _comptes(index: SearchIndex, code: str) -> dict[str, int]:
@@ -104,8 +123,16 @@ def _comptes(index: SearchIndex, code: str) -> dict[str, int]:
 
 
 class TestEcritureTransactionnelle:
-    def test_fiche_ecrite_en_statut_a_valider(self, base_fiches, fiche_7792) -> None:
-        fiche = fiche_7792.model_copy(update={"code": "7792-SO-ETAT"})
+    def test_le_statut_ecrit_est_celui_que_la_regle_decide(self, base_fiches, fiche_reference) -> None:
+        """Anciennement « RG3 : toujours a_valider, jamais valide ».
+
+        RG3 est remplacée par l'auto-validation au seuil de 90 %. La fiche
+        1042 score 0,929 : affirmer « a_valider » serait faux. On vérifie
+        la COHÉRENCE entre la base et la règle, pas un statut figé — ce
+        test échouera si le code et la règle divergent, quel que soit le
+        sens de l'écart.
+        """
+        fiche = fiche_reference.model_copy(update={"code": "1042-EX-ETAT"})
         id_fiche, action = ecrire_fiche(base_fiches["index"], fiche)
         assert action == "creee" and id_fiche > 0
         index = base_fiches["index"]
@@ -113,8 +140,10 @@ class TestEcritureTransactionnelle:
             with connexion.cursor() as cursor:
                 cursor.execute("SELECT statut, score_qualite, id_gabarit FROM fiche WHERE id_fiche = %s", (id_fiche,))
                 statut, score, id_gabarit = cursor.fetchone()
-        # RG3 : le statut d'arrivée est TOUJOURS a_valider — jamais valide.
-        assert statut == "a_valider"
+                cursor.execute("SELECT code, gravite FROM fiche_anomalie WHERE id_fiche = %s", (id_fiche,))
+                anomalies = [Anomalie(code=c, gravite=g) for c, g in cursor.fetchall()]
+        attendu = decider_statut_arrivee(float(score) if score is not None else None, anomalies)
+        assert statut == attendu.statut, f"base {statut} ≠ règle {attendu.statut} ({attendu.raison})"
         assert score is not None and 0.0 <= float(score) <= 1.0
         assert id_gabarit is not None
 
@@ -170,9 +199,9 @@ class TestEcritureTransactionnelle:
         assert lignes["titre"][1] == "Pas de coulisseaux"
 
 
-    def test_toutes_les_tables_enfants_remplies(self, base_fiches, fiche_7792) -> None:
-        ecrire_fiche(base_fiches["index"], fiche_7792)
-        comptes = _comptes(base_fiches["index"], fiche_7792.code)
+    def test_toutes_les_tables_enfants_remplies(self, base_fiches, fiche_reference) -> None:
+        ecrire_fiche(base_fiches["index"], fiche_reference)
+        comptes = _comptes(base_fiches["index"], fiche_reference.code)
         assert comptes["fiche"] == 1
         # Document RÉEL : les deux jeux de cotes sont imprimés.
         assert comptes["cotes"] == 2  # jeux « dessin » + « finie »
@@ -184,11 +213,11 @@ class TestEcritureTransactionnelle:
         # v-trim) + bloc velcro/retenue/anti-UV.
         assert comptes["options"] == 8
         assert comptes["renforts"] == 3  # note « 2 x œillets… + dacron + dacron »
-        assert comptes["champs"] == len(fiche_7792.tous_les_champs())
+        assert comptes["champs"] == len(fiche_reference.tous_les_champs())
         assert comptes["anomalies"] == 0
 
-    def test_zones_et_version_gabarit_tracées(self, base_fiches, fiche_7792) -> None:
-        ecrire_fiche(base_fiches["index"], fiche_7792)
+    def test_zones_et_version_gabarit_tracées(self, base_fiches, fiche_reference) -> None:
+        ecrire_fiche(base_fiches["index"], fiche_reference)
         index = base_fiches["index"]
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
@@ -201,8 +230,8 @@ class TestEcritureTransactionnelle:
         assert version == 2  # gabarit réglé sur le document réel (Tâche 2)
         assert methode == "gabarit" and float(confiance) > 0.5 and page == 0
 
-    def test_referentiels_resolus_ou_crees(self, base_fiches, fiche_7792) -> None:
-        ecrire_fiche(base_fiches["index"], fiche_7792)
+    def test_referentiels_resolus_ou_crees(self, base_fiches, fiche_reference) -> None:
+        ecrire_fiche(base_fiches["index"], fiche_reference)
         index = base_fiches["index"]
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
@@ -214,17 +243,25 @@ class TestEcritureTransactionnelle:
                     "LEFT JOIN fiche_materiau fm ON fm.id_fiche = f.id_fiche AND fm.niveau = 1 "
                     "LEFT JOIN materiau m ON m.id_materiau = fm.id_materiau "
                     "WHERE f.code = %s",
-                    (fiche_7792.code,),
+                    (fiche_reference.code,),
                 )
                 client, bateau, taille, type_voile, materiau = cursor.fetchone()
-        assert (client, bateau, taille, type_voile) == ("Sailonet", "29er", "15'", "Spi Asymétrique")
+        assert (client, bateau, taille, type_voile) == ("Exemplia", "29er", "15'", "Spi Asymétrique")
         assert materiau == "Monofilm K903"
 
 
 class TestIdempotenceRG11:
-    def test_rejouer_ne_duplique_rien(self, base_fiches, fiche_7792) -> None:
+    def test_rejouer_ne_duplique_rien(self, base_fiches, fiche_reference, sans_auto_validation: None) -> None:
+        """Le rejeu remplace sur place, sans dupliquer.
+
+        Le seuil est porté hors d'atteinte : une fiche auto-validée est
+        PROTÉGÉE par RG11 et sa seconde écriture est refusée
+        (« conservee_validee ») au lieu d'être remplacée — ce que ce test
+        ne cherche pas à mesurer, et qui est prouvé à part par
+        ``test_une_fiche_auto_validee_n_est_plus_reextraite``.
+        """
         index = base_fiches["index"]
-        fiche = fiche_7792.model_copy(update={"code": "7792-SO-REJEU"})
+        fiche = fiche_reference.model_copy(update={"code": "1042-EX-REJEU"})
         _, premiere = ecrire_fiche(index, fiche)
         comptes_1 = _comptes(index, fiche.code)
         _, seconde = ecrire_fiche(index, fiche)
@@ -233,29 +270,29 @@ class TestIdempotenceRG11:
         assert comptes_1 == comptes_2, "le rejeu a dupliqué des lignes (RG11)"
         assert comptes_1["fiche"] == 1
 
-    def test_rejeu_re_lit_les_valeurs_a_identique(self, base_fiches, fiche_7792) -> None:
+    def test_rejeu_re_lit_les_valeurs_a_identique(self, base_fiches, fiche_reference) -> None:
         index = base_fiches["index"]
-        ecrire_fiche(index, fiche_7792)
-        ecrire_fiche(index, fiche_7792)
-        finie = next(c for c in fiche_7792.cotes if c.jeu == "finie")
+        ecrire_fiche(index, fiche_reference)
+        ecrire_fiche(index, fiche_reference)
+        finie = next(c for c in fiche_reference.cotes if c.jeu == "finie")
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
                 cursor.execute(
                     "SELECT slu_m, sf_m FROM fiche_cotes c JOIN fiche f ON f.id_fiche = c.id_fiche WHERE f.code = %s",
-                    (fiche_7792.code,),
+                    (fiche_reference.code,),
                 )
                 slu, sf = cursor.fetchone()
         assert (float(slu), float(sf)) == (finie.slu_m, finie.sf_m)
 
-    def test_fiche_validee_jamais_ecrasee(self, base_fiches, fiche_7792) -> None:
+    def test_fiche_validee_jamais_ecrasee(self, base_fiches, fiche_reference) -> None:
         index = base_fiches["index"]
-        id_fiche, _ = ecrire_fiche(index, fiche_7792)
+        id_fiche, _ = ecrire_fiche(index, fiche_reference)
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
                 cursor.execute("UPDATE fiche SET statut = 'valide', titre = 'VALIDÉE PAR UN HUMAIN' WHERE id_fiche = %s", (id_fiche,))
-        avant = _comptes(index, fiche_7792.code)
-        id_rejeu, action = ecrire_fiche(index, fiche_7792)
-        apres = _comptes(index, fiche_7792.code)
+        avant = _comptes(index, fiche_reference.code)
+        id_rejeu, action = ecrire_fiche(index, fiche_reference)
+        apres = _comptes(index, fiche_reference.code)
         # RG11 : rejeu sur fiche validée → aucun changement, aucun doublon
         assert action == "conservee_validee" and id_rejeu == id_fiche
         assert avant == apres
@@ -278,7 +315,7 @@ class TestRechercheDesLEcriture:
     « non vérifiée » par l'interface) — son texte de recherche pondéré est
     rempli DÈS l'écriture, pas seulement à la validation.
 
-    NB : le banc sème déjà la 7792-SO VALIDÉE (vérité terrain) ; ces tests
+    NB : le banc sème déjà la 1042-EX VALIDÉE (vérité terrain) ; ces tests
     écrivent une fiche NOUVELLE à code unique, comme le dépôt d'un nouveau
     dossier en production."""
 
@@ -326,8 +363,8 @@ class TestRechercheDesLEcriture:
 
 
 class TestBancGabaritTest:
-    def test_non_regression_7792_conforme(self, base_fiches, fiche_7792) -> None:
-        resultat = verifier_non_regression(base_fiches["index"], fiche_7792)
+    def test_non_regression_reference_conforme(self, base_fiches, fiche_reference) -> None:
+        resultat = verifier_non_regression(base_fiches["index"], fiche_reference)
         assert resultat["taux"] >= 0.90, resultat["ecarts"]
         assert resultat["conforme"]
 
@@ -335,20 +372,20 @@ class TestBancGabaritTest:
         codes = {g.code for g in charger_gabarits(base_fiches["index"])}
         assert {"FICHE_PORTANT_V1", "FICHE_GENOIS_V1"} <= codes
 
-    def test_verite_7792_avec_empreinte_pdf(self, base_fiches) -> None:
+    def test_verite_reference_avec_empreinte_pdf(self, base_fiches) -> None:
         import hashlib
 
         index = base_fiches["index"]
         with index.connect() as connexion:
             with connexion.cursor() as cursor:
                 cursor.execute(
-                    "SELECT empreinte_pdf, attendu FROM gabarit_test WHERE nom_fichier = 'fiche-7792-SO_ffab.pdf'"
+                    "SELECT empreinte_pdf, attendu FROM gabarit_test WHERE nom_fichier = 'fiche-1042-EX_ffab.pdf'"
                 )
                 empreinte, attendu = cursor.fetchone()
-        assert empreinte == hashlib.sha256(PDF_7792.read_bytes()).hexdigest()
-        assert attendu["fiche.code"] == "7792-SO"
+        assert empreinte == hashlib.sha256(PDF_REFERENCE.read_bytes()).hexdigest()
+        assert attendu["fiche.code"] == "1042-EX"
 
-    def test_evaluer_verite_direct(self, fiche_7792) -> None:
-        taux, ecarts = evaluer_verite(fiche_7792, {"fiche.code": "7792-SO", "cotes.finie.slu_m": 6.6, "client": "Autre"})
+    def test_evaluer_verite_direct(self, fiche_reference) -> None:
+        taux, ecarts = evaluer_verite(fiche_reference, {"fiche.code": "1042-EX", "cotes.finie.slu_m": 6.6, "client": "Autre"})
         assert taux == round(2 / 3, 4)
         assert len(ecarts) == 1 and ecarts[0]["champ"] == "client"

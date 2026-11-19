@@ -1,7 +1,7 @@
 """Lot I — assistant sourcé : preuves PostgreSQL (plan v3.0 §11, Phase 4).
 
 Contre une base jetable semée par ``tests/conftest.py::base_assistant``
-(corpus Lot E + cotes SYNTHÉTIQUES étiquetées + VRAIE fiche 7792-SO entrée par
+(corpus Lot E + cotes SYNTHÉTIQUES étiquetées + VRAIE fiche 1042-EX entrée par
 le pipeline réglé), ce fichier prouve :
 
 - le jeu d'essai des 8 questions du commanditaire, avec la réponse obtenue
@@ -22,7 +22,7 @@ le pipeline réglé), ce fichier prouve :
 ⚠️ ÉTIQUETAGE (même règle que le Lot E) : le corpus contient 12 fiches
 SYNTHÉTIQUES + UNE fiche réelle. Les mesures portent sur ce mélange, étiqueté
 tel quel ; la fiche réelle seule est identifiée dans chaque réponse par son
-code (7792-SO).
+code (1042-EX).
 """
 
 from __future__ import annotations
@@ -51,10 +51,10 @@ ARCHIVE = RACINE / "sample_data"
 
 # Réponses attendues — chacune issue de la vérité terrain (fonds réel) ou du
 # semis déterministe (synthétique), écrites EN CLAIR.
-ATTENDU_SLU_7792 = 6.6          # 'cotes.finie.slu_m' — vérité terrain réelle
+ATTENDU_SLU_REFERENCE = 6.6          # 'cotes.finie.slu_m' — vérité terrain réelle
 ATTENDU_GALON_BORDURE = "Nylon"  # 'galon.bordure.matiere' — vérité terrain réelle
 ATTENDU_COMPTAGE_PORTANT_2024 = 1          # 0812-SPI-001 (synthétique)
-ATTENDU_PLAGE_SLU = {"0701-GV-001", "0702-GV-003", "7792-SO"}  # 2 synth + 1 réel
+ATTENDU_PLAGE_SLU = {"0701-GV-001", "0702-GV-003", "1042-EX"}  # 2 synth + 1 réel
 
 
 def _empreinte_archive() -> str:
@@ -76,19 +76,19 @@ def _question_cible(index: Any, question: str, inclure_a_valider: bool = False) 
 
 @pytest.mark.postgres
 def test_q1_slu_fiche_reelle(base_assistant: dict[str, Any]) -> None:
-    """Q1 — « quelle est la SLU de la fiche 7792-SO ? » → 6,60 m, citation
+    """Q1 — « quelle est la SLU de la fiche 1042-EX ? » → 6,60 m, citation
     vérifiable avec la ZONE PDF de la trace réelle."""
     reponse = _question_cible(base_assistant["index"], JEU_8_QUESTIONS[0][0])
     assert reponse["etat"] == ETAT_OK, reponse
     assert "6,60 m" in reponse["reponse"], reponse["reponse"]
     assert reponse["citations"], "aucune réponse sans citation"
     citation = reponse["citations"][0]
-    assert citation["code_fiche"] == "7792-SO"
+    assert citation["code_fiche"] == "1042-EX"
     assert citation["champ"] == "cotes.finie.slu_m"
     assert citation["table_cible"] == "fiche_cotes" and citation["colonne_cible"] == "slu_m"
-    assert float(citation["valeur_normalisee"]) == ATTENDU_SLU_7792
+    assert float(citation["valeur_normalisee"]) == ATTENDU_SLU_REFERENCE
     assert citation["zone"] is not None, "la trace réelle porte la zone PDF"
-    assert citation["lien"].startswith("/dossier/7792-SO?champ=cotes.finie.slu_m")
+    assert citation["lien"].startswith("/dossier/1042-EX?champ=cotes.finie.slu_m")
 
 
 @pytest.mark.postgres
@@ -99,7 +99,7 @@ def test_q2_voiles_par_bateau(base_assistant: dict[str, Any]) -> None:
     assert reponse["etat"] == ETAT_OK, reponse
     assert "Spi Asymétrique" in reponse["reponse"], reponse["reponse"]
     assert reponse["citations"], "aucune réponse sans citation"
-    assert reponse["citations"][0]["code_fiche"] == "7792-SO"
+    assert reponse["citations"][0]["code_fiche"] == "1042-EX"
 
 
 @pytest.mark.postgres
@@ -125,7 +125,7 @@ def test_q4_plage_slu(base_assistant: dict[str, Any]) -> None:
     codes = {citation["code_fiche"] for citation in reponse["citations"]}
     assert codes == ATTENDU_PLAGE_SLU, codes
     valeurs = {citation["code_fiche"]: float(citation["valeur_normalisee"]) for citation in reponse["citations"]}
-    assert valeurs["7792-SO"] == ATTENDU_SLU_7792
+    assert valeurs["1042-EX"] == ATTENDU_SLU_REFERENCE
     assert 6.5 <= min(valeurs.values()) and max(valeurs.values()) <= 6.7
 
 
@@ -138,7 +138,7 @@ def test_q5_matiere_galon_bordure(base_assistant: dict[str, Any]) -> None:
     assert ATTENDU_GALON_BORDURE in reponse["reponse"], reponse["reponse"]
     citation = reponse["citations"][0]
     assert citation["table_cible"] == "fiche_galon"
-    assert citation["code_fiche"] == "7792-SO"
+    assert citation["code_fiche"] == "1042-EX"
     assert citation["zone"] is not None, "la trace réelle porte la zone PDF"
 
 
@@ -159,7 +159,7 @@ def test_q6_refus_sans_invention(base_assistant: dict[str, Any]) -> None:
 
 @pytest.mark.postgres
 def test_q7_ambigu_liste_lectures_sourcees(base_assistant: dict[str, Any]) -> None:
-    """Q7 — « la matière de la fiche 7792-SO ? » → la question est AMBIGUE :
+    """Q7 — « la matière de la fiche 1042-EX ? » → la question est AMBIGUE :
     l'assistant liste les lectures (tissu / galons / renforts), chacune avec
     ses propres citations."""
     reponse = _question_cible(base_assistant["index"], JEU_8_QUESTIONS[6][0])
@@ -301,7 +301,7 @@ def test_perf_assistant_jeu_8(base_assistant: dict[str, Any]) -> None:
     publier_mesure_perf("assistant_jeu_8_corpus_mixte", p50, p95, maximum, n)
     print(
         f"\n[mesure Lot I — assistant] jeu des 8 questions, n = {n} "
-        f"(8 questions × 10 passages, 1 échauffement, corpus étiqueté synthétique + réel 7792-SO) : "
+        f"(8 questions × 10 passages, 1 échauffement, corpus étiqueté synthétique + réel 1042-EX) : "
         f"p50 = {p50:.1f} ms, p95 = {p95:.1f} ms, max = {maximum:.1f} ms"
     )
     for question, valeurs in sorted(par_question.items()):
@@ -319,7 +319,7 @@ def test_perf_assistant_jeu_8(base_assistant: dict[str, Any]) -> None:
 def test_option_consignee_non(base_assistant: dict[str, Any]) -> None:
     """Option consignée « Non » (faux) dans la fiche : l'assistant répond Non
     avec la citation fiche_option — il n'interprète pas un silence."""
-    reponse = _question_cible(base_assistant["index"], "la fiche 7792-SO a-t-elle une protection anti-uv ?")
+    reponse = _question_cible(base_assistant["index"], "la fiche 1042-EX a-t-elle une protection anti-uv ?")
     assert reponse["etat"] == ETAT_OK, reponse
     assert "Non" in reponse["reponse"], reponse["reponse"]
     citation = reponse["citations"][0]
@@ -330,10 +330,10 @@ def test_option_consignee_non(base_assistant: dict[str, Any]) -> None:
 @pytest.mark.postgres
 def test_champ_fiche_client(base_assistant: dict[str, Any]) -> None:
     """Champ de tête par code : le client RÉEL de la fiche (vérité terrain)."""
-    reponse = _question_cible(base_assistant["index"], "quel est le client de la fiche 7792-SO ?")
+    reponse = _question_cible(base_assistant["index"], "quel est le client de la fiche 1042-EX ?")
     assert reponse["etat"] == ETAT_OK, reponse
-    assert "Sailonet" in reponse["reponse"], reponse["reponse"]
-    assert reponse["citations"][0]["code_fiche"] == "7792-SO"
+    assert "Exemplia" in reponse["reponse"], reponse["reponse"]
+    assert reponse["citations"][0]["code_fiche"] == "1042-EX"
 
 
 @pytest.mark.postgres
@@ -358,7 +358,7 @@ def test_surplus_renseigne_n_est_pas_sans_objet(base_assistant: dict[str, Any]) 
 @pytest.mark.postgres
 def test_galon_bordure_avec_code(base_assistant: dict[str, Any]) -> None:
     """Question 5 formulée AVEC le code : même réponse sourcée (Nylon, réel)."""
-    reponse = _question_cible(base_assistant["index"], "quelle matière pour le galon de bordure de la fiche 7792-SO ?")
+    reponse = _question_cible(base_assistant["index"], "quelle matière pour le galon de bordure de la fiche 1042-EX ?")
     assert reponse["etat"] == ETAT_OK, reponse
     assert "Nylon" in reponse["reponse"], reponse["reponse"]
     assert reponse["citations"][0]["zone"] is not None
@@ -391,7 +391,7 @@ def test_plage_slu_en_mesures_dessin_explicite(base_assistant: dict[str, Any]) -
     assert reponse["etat"] == ETAT_OK, reponse
     assert "mesures dessin" in reponse["reponse"], reponse["reponse"]
     codes = {citation["code_fiche"] for citation in reponse["citations"]}
-    assert codes == {"7792-SO"}, codes
+    assert codes == {"1042-EX"}, codes
 
 
 @pytest.mark.postgres

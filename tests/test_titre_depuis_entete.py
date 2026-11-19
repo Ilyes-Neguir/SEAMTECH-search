@@ -30,7 +30,7 @@ def _ecrire(chemin: Path, lignes: list[str]) -> Path:
     return chemin
 
 
-def _fiche_sailonet(chemin: Path) -> Path:
+def _fiche_exemplia(chemin: Path) -> Path:
     return _ecrire(
         chemin,
         [
@@ -46,7 +46,7 @@ def _fiche_sailonet(chemin: Path) -> Path:
 
 
 def test_titre_lu_dans_l_entete_quand_le_gabarit_n_en_porte_pas(tmp_path: Path) -> None:
-    pdf = _fiche_sailonet(tmp_path / "FFAB_demo000001.pdf")
+    pdf = _fiche_exemplia(tmp_path / "FFAB_demo000001.pdf")
     fiche = extraire_fiche(pdf, gabarits=list(GABARITS_EMBARQUES))
     assert fiche.titre is not None, "le type imprimé ne doit plus être perdu"
     assert "genois" in fiche.titre.lower().replace("é", "e")
@@ -78,7 +78,7 @@ def test_aucun_titre_invente_sans_famille_imprimee(tmp_path: Path) -> None:
     assert fiche.champs == []
 
 
-def test_grille_de_cotes_sailonet_lue_dans_l_ordre_de_l_entete(tmp_path: Path) -> None:
+def test_grille_de_cotes_exemplia_lue_dans_l_ordre_de_l_entete(tmp_path: Path) -> None:
     """En-tête « cotes guindant bordure chute têtière SURFACE poids » + valeurs.
 
     Mesuré sur le même document : la grille n'était lue par aucun gabarit, la

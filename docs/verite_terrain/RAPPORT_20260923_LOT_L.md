@@ -35,7 +35,7 @@ Le lot L se compose de **deux livraisons neuves** (L.1, L.2) et d'un **rattrapag
 | L.1 | **Détection de doublons AVANT validation** : exacte (SHA-256 du PDF) + probable (titres), 100 % propositive, jamais de fusion, `dry_run=True` par défaut, 4 routes, CLI | **neuf (lot L)** | `f5e1016` | §2.4 |
 | L.2 | **Comptes nominatifs** : scrypt stdlib, sessions en base, connexion nominative, frontière de confiance (`X-SEAMTECH-*` seulement avec `X-SEAMTECH-TOKEN`), rôles 401/403, révocation, **attribution « qui a validé quoi »** (`taux_par_utilisateur`) | **neuf (lot L)** | `d2142b6` | §2.5 |
 | C.1 | Tableau de bord qualité : test de **forme** (égalité exacte des 9 clés), test de **valeurs** (doublons, attribution), test de **route** (`TestClient`) | rattrapage audit 23/09 | `d2142b6` | §2.3 |
-| C.2 | e2e live du **bandeau de doublon** avec un doublon **réel** dans le seed (`BIS-7792` partage le PDF de `7792-SO`) — aucun `test.skip` ajouté | rattrapage audit 23/09 | `d2142b6` + `81fcbbb` | §2.6 |
+| C.2 | e2e live du **bandeau de doublon** avec un doublon **réel** dans le seed (`BIS-1042-EX` partage le PDF de `1042-EX`) — aucun `test.skip` ajouté | rattrapage audit 23/09 | `d2142b6` + `81fcbbb` | §2.6 |
 | C.3 | `docs/API.md` : routes L.1, routes `/auth/*`, **frontière de confiance**, verrou `audit_log`, **9 indicateurs** documentés | rattrapage audit 23/09 | `d2142b6` | §2.6 |
 | C.4 | Schéma : `TABLES_METIER` **contient 32 tables** (dont `session_ui`) — jamais écrit « = 32 » | rattrapage audit 23/09 | `d2142b6` | §2.2 |
 | — | 4 gardes de sabotage exécutées **en CI** (dimension, cotes, dédup, attribution) avec preuves en annotations | porte de sortie | `d2142b6` + `02821b6` | §2.7 |
@@ -229,7 +229,7 @@ Le seed live contient désormais un **vrai** doublon (même PDF, même SHA-256) 
 
 ```console
 $ SEAMTECH_E2E_DATABASE_URL=… /home/user/.venv/bin/python frontend/e2e/seed-live-pg.py
-Seed e2e : fiche BIS-7792 (id 4) partage le PDF de 7792-SO — scan propositif : 1 lien(s) créé(s), 0 déjà présent(s), 2 fiche(s) concernée(s).
+Seed e2e : fiche BIS-1042-EX (id 4) partage le PDF de 1042-EX — scan propositif : 1 lien(s) créé(s), 0 déjà présent(s), 2 fiche(s) concernée(s).
 Seed e2e : compte nominatif « e2e-operateur » (operateur) créé.
 Seed e2e : compte nominatif « e2e-admin » (administrateur) créé.
 ```
@@ -302,7 +302,7 @@ Cause : le test « aucune commande de fusion n'est proposée » passait **avant*
 **APRÈS** (run `35851520903`, SHA `d8b2b7f`) — les trois étapes live, toutes vertes :
 
 ```console
-[notice] mesure-phase1 :: parcours machine complet de la vraie fiche 7792-SO (navigation → fiche ouverte, champs et PDF rendus → correction RG11 → validation) : 675 ms ; lecture humaine hors chrono (critère < 120 000 ms)
+[notice] mesure-phase1 :: parcours machine complet de la vraie fiche 1042-EX (navigation → fiche ouverte, champs et PDF rendus → correction RG11 → validation) : 675 ms ; lecture humaine hors chrono (critère < 120 000 ms)
 [notice] e2e-doublons :: 2 tests verts (bandeau visible, aucune fusion proposée)
 [notice] e2e-auth-nominatif :: 23 tests verts (dont 4 sur les comptes nominatifs)
 ```
@@ -343,7 +343,7 @@ La suite locale ne bouge pas (532) : les tests du lot L sont marqués `postgres`
 
 | Mesure | Où | Valeur |
 |---|---|---|
-| Parcours machine complet de la vraie fiche `7792-SO` | CI, annotation `mesure-phase1` | **666 ms** (run `35850813351`) puis **675 ms** (run `35851520903`) — critère < 120 000 ms |
+| Parcours machine complet de la vraie fiche `1042-EX` | CI, annotation `mesure-phase1` | **666 ms** (run `35850813351`) puis **675 ms** (run `35851520903`) — critère < 120 000 ms |
 | Recherche 1 500 fiches (mi-échelle) | CI, `perf-latence` | `p50 = 15.7 ms, p95 = 47.1 ms, max = 47.9 ms (n = 60)` — critère produit p95 < 100 ms |
 | Qualité, 1 000 fiches | CI, `perf-latence` | `p50 = 2.1 ms, p95 = 2.2 ms, max = 2.7 ms` |
 | Restauration de sauvegarde (50 000 fiches) | CI, job `sauvegarde` | `restauration de 50000 fiches en 1.27 s (dump 575857 octets)` |

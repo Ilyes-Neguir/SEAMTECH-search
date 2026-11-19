@@ -135,7 +135,7 @@ voient un refus explicite. La garde reste double (relais Next.js + backend).
   alias appris → cote corrigée relue dans l'historique ; lecture et
   utilisateur refusés), Lot 1 7/7, parcours canonisés 8/8, OCR 4/4, auth
   34/34, doublons 2/2, validation/badge/dimension/extrait 12/12 ; parcours
-  complet de la vraie fiche 7792-SO : 930 ms.
+  complet de la vraie fiche 1042-EX : 930 ms.
 - Qualification native `40235516673`, Qualification réservés `40235516638`,
   Perf comparaison `40235516654` : succès au même SHA. La Perf signale comme
   aux lots précédents un avertissement de dérive d'environnement CI

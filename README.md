@@ -6,7 +6,7 @@ Internal file search, technical dossier ingestion, and synthesis report platform
 « Verified state ») :
 
 - **Ce qui est établi** : extraction réglée mesurée 6/6 sur UNE vraie fiche
-  client (7792-SO) ; recherche hybride PostgreSQL 13/13 sur le jeu réel et
+  client (1042-EX) ; recherche hybride PostgreSQL 13/13 sur le jeu réel et
   50/50 sur le jeu synthétique de référence ; latence produit p95 < 100 ms
   mesurée HORS instrumentation (étape CI dédiée, publiée en ::notice) ;
   parcours machine complet de validation 582-665 ms sur la vraie fiche

@@ -79,7 +79,7 @@ def _creer_base(prefixe: str) -> dict[str, Any]:
     codes: dict[str, str] = {}
     for nom, source in (
         ("GENOA", RACINE / "sample_data/CLIENT-GENOA/fiche-genois.pdf"),
-        ("SO", RACINE / "sample_data/CLIENT-7792-SO/fiche-7792-SO_ffab.pdf"),
+        ("SO", RACINE / "sample_data/CLIENT-1042-EX/fiche-1042-EX_ffab.pdf"),
     ):
         dossier = racine_essai / nom
         dossier.mkdir(parents=True, exist_ok=True)

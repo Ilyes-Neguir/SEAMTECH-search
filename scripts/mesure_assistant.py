@@ -4,7 +4,7 @@
 Ce que fait ce script (§17.13 : un lot sans chiffres n'est pas terminé) :
 
 1. Crée une base PostgreSQL JETABLE, la migre, la sème (corpus Lot E + cotes
-   SYNTHÉTIQUES étiquetées + la VRAIE fiche 7792-SO entrée par le pipeline
+   SYNTHÉTIQUES étiquetées + la VRAIE fiche 1042-EX entrée par le pipeline
    réglé — même semis que ``tests/test_assistant_postgres.py``).
 2. Exécute les 8 questions : réponse obtenue, nombre de citations, état.
 3. Mesure p50/p95/max par question (1 échauffement + 10 passages mesurés,
@@ -227,7 +227,7 @@ def main() -> int:
     print(f"  RG13 empreinte archive après = {empreinte_apres} ({'IDENTIQUE' if empreinte_avant == empreinte_apres else 'MODIFIÉE !'})")
 
     sortie = {
-        "corpus": "corpus Lot E (12 fiches synthétiques + 2 a_valider + 1 rejetée) + cotes SLU synthétiques + fiche réelle 7792-SO",
+        "corpus": "corpus Lot E (12 fiches synthétiques + 2 a_valider + 1 rejetée) + cotes SLU synthétiques + fiche réelle 1042-EX",
         "repetitions_par_question": REPETITIONS_MESUREES,
         "questions": resultats,
         "global_direct": {

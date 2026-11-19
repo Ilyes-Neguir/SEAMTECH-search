@@ -2,9 +2,12 @@
 
 Statut au 2026-09-28 : le Lot 1 (gabarits + classification automatique) et le
 Lot 2 (job CI `recette-corpus-reel`) sont livrés sur la branche de travail.
-**Aucune fiche n'est validée** : les 7 fiches extraites du corpus réel sont
-`a_valider` (RG3) et le resteront jusqu'à décision humaine. Ce guide prépare
-cette décision — il ne la remplace jamais.
+**Aucune fiche n'est validée par un humain** : les 7 fiches extraites du corpus
+réel attendent une décision. Depuis la décision du commanditaire du 2026-11-14,
+celles dont le score dépasse strictement 90 % sans anomalie bloquante sont
+**auto-validées à l'arrivée** (règle qui remplace RG3) — elles n'attendent plus
+personne ; les autres restent `a_valider`. Ce guide prépare la décision sur
+celles qui restent — il ne la remplace jamais.
 
 > **Cadre de confidentialité.** Les ZIP du corpus sont commités à la racine du
 > dépôt par le commanditaire ; ce guide n'y ajoute AUCUNE valeur métier. Les
@@ -63,13 +66,13 @@ noter l'écart dans le suivi — ne pas forcer.
 
 | Code | Dossier (nom public du ZIP, ordre alphabétique) | Famille de format | Points d'attention propres |
 |---|---|---|---|
-| REF-001 | `AQUILA 250216AJA-20260928T182324Z-1-001.zip` | JADE | tissu absent de la fiche (champ honnêtement vide) |
-| REF-002 | `ATTALIA 250121JA-20260928T182325Z-1-001.zip` | JADE | génois : vérifier le type de voile et son accent |
-| REF-003 | `BAVARIA 32 - 250604JA-20260928T182326Z-1-001.zip` | JADE | **tissu présent** (colonne centrale, sous la ligne DATE) |
-| REF-004 | `BAVARIA 34 - 250323JA-20260928T182327Z-1-001.zip` | JADE | génois ; bande de visu |
-| REF-005 | `DAMIEN 4 - 250821JA-20260928T182330Z-1-001.zip` | JADE | **tissu + remarques (DIVERS) + renforts** présents |
-| REF-006 | `DEHLER 39 - 250329AJA-20260928T182330Z-1-001.zip` | **GV FULLBATTEN** | fiche la plus riche (40 propositions) : ris 1-3, goussets L1-L7, lattes, bôme, numéro de voile, montage zigzag + fil |
-| REF-007 | `GIB SEA 284 - 250328AJA-20260928T182331Z-1-001.zip` | JADE | génois ; 3e fiche GSE de la même mise en page |
+| REF-001 | `CORPUS-01-20260928T182324Z-1-001.zip` | JADE | tissu absent de la fiche (champ honnêtement vide) |
+| REF-002 | `CORPUS-02-20260928T182325Z-1-001.zip` | JADE | génois : vérifier le type de voile et son accent |
+| REF-003 | `CORPUS-03-20260928T182326Z-1-001.zip` | JADE | **tissu présent** (colonne centrale, sous la ligne DATE) |
+| REF-004 | `CORPUS-04-20260928T182327Z-1-001.zip` | JADE | génois ; bande de visu |
+| REF-005 | `CORPUS-05-20260928T182330Z-1-001.zip` | JADE | **tissu + remarques (DIVERS) + renforts** présents |
+| REF-006 | `CORPUS-06-20260928T182330Z-1-001.zip` | **GV FULLBATTEN** | fiche la plus riche (40 propositions) : ris 1-3, goussets L1-L7, lattes, bôme, numéro de voile, montage zigzag + fil |
+| REF-007 | `CORPUS-07-20260928T182331Z-1-001.zip` | JADE | génois ; 3e fiche GSE de la même mise en page |
 
 Dans chaque dossier : **ouvrir le PDF proposé comme candidat technique**
 (l'unique « fiche de fabrication » du dossier — les autres PDF sont des plans,
@@ -133,8 +136,10 @@ de lecture suggéré** (basse confiance d'abord), jamais une décision.
 - **Confiance 0,70 sur `fiche.designation`** : le libellé du type de voile
   est le champ d'en-tête le moins certain (accents, abréviations atelier) —
   c'est le PREMIER champ à relire.
-- **Rien n'est validé automatiquement** : le statut `a_valider` de chaque
-  fiche est le comportement attendu (RG3), pas un retard.
+- **L'auto-validation existe depuis le 2026-11-14** : une fiche dont le score
+  dépasse strictement 90 % et qui ne porte aucune anomalie bloquante arrive
+  `valide`. Une fiche encore `a_valider` est donc soit sous le seuil, soit
+  porteuse d'une anomalie — ce n'est pas un retard, c'est un signal.
 
 ## 4. Saisir une correction (attribution nominative + contrôle secondaire)
 
