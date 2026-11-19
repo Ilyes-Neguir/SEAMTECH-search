@@ -11,6 +11,7 @@ import { IndexStatus } from "@/components/index-status"
 import { SearchBar } from "@/components/search-bar"
 import { ResultsList } from "@/components/results-list"
 import { PreviewPanel } from "@/components/preview-panel"
+import { ImportPanel } from "@/components/import-panel"
 import { cn } from "@/lib/utils"
 import { SignOutButton } from "@/components/sign-out-button"
 
@@ -54,6 +55,8 @@ export function SearchApp() {
           </div>
         </div>
       </header>
+
+      <ImportPanel />
 
       {/* Body */}
       <div className="mx-auto flex w-full max-w-6xl flex-1 gap-0 px-4 sm:px-6">
