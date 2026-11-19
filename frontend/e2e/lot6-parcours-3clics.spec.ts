@@ -231,19 +231,21 @@ test.describe("Lot 6 — parcours 3 clics et cohérence globale", () => {
       {
         nom: "lecture",
         compte: LECTURE,
-        visibles: ["Recherche", "Comparaison", "Confiance", "Demandes"],
+        // Comparaison n'est plus dans la nav : accès via le bouton
+        // « Comparaison » de /recherche (page conservée pré-remplie).
+        visibles: ["Recherche", "Confiance", "Demandes"],
         masques: ["Nouveau dossier", "Validation", "Extractions", "Gabarits", "Comptes"],
       },
       {
         nom: "utilisateur",
         compte: UTILISATEUR,
-        visibles: ["Nouveau dossier", "Comparaison", "Confiance", "Demandes"],
+        visibles: ["Nouveau dossier", "Confiance", "Demandes"],
         masques: ["Validation", "Extractions", "Gabarits", "Comptes"],
       },
       {
         nom: "admin",
         compte: ADMIN,
-        visibles: ["Nouveau dossier", "Comparaison", "Confiance", "Demandes", "Gabarits", "Comptes"],
+        visibles: ["Nouveau dossier", "Confiance", "Demandes", "Gabarits", "Comptes"],
         masques: ["Validation", "Extractions"], // l'admin ne décide jamais (Lot 1)
       },
     ]
