@@ -27,3 +27,8 @@ coverage-bancs*.json
 # Bilan de la recette fonctionnelle : les rapports JUnit intermédiaires sont
 # des produits dérivés, seul le bilan (matrice-recette.*) est conservé.
 docs/recette/junit-*.xml
+
+# Skills d'outillage d'agent (non versionnés, locaux) : .claude/, .agents/, agent/
+.claude/
+.agents/
+agent/
