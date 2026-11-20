@@ -463,6 +463,40 @@ def test_api_mauvais_mot_de_passe_et_jeton_de_service(
     assert sans_jeton.status_code == 401
 
 
+def test_api_connexion_journalise_adresse_ip(
+    base_comptes: dict[str, Any], client_comptes: TestClient
+) -> None:
+    """L'IP transmise via X-Forwarded-For est journalisée (details.adresse).
+
+    Sans elle, le journal des connexions est inutilisable pour enquêter sur
+    un site public, et le verrouillage par (identifiant, IP) est impossible.
+    """
+    import json
+
+    _creer(base_comptes, "imrane", "Secret!2026")
+
+    connexion = client_comptes.post(
+        "/auth/connexion",
+        json={"identifiant": "imrane", "mot_de_passe": "Secret!2026"},
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-Forwarded-For": "203.0.113.7"},
+    )
+    assert connexion.status_code == 200, connexion.text
+
+    with base_comptes["index"].connect() as connexion_bdd:
+        with connexion_bdd.cursor() as curseur:
+            curseur.execute(
+                "SELECT details FROM audit_log WHERE actor = %s AND action = %s "
+                "ORDER BY timestamp DESC LIMIT 1",
+                ("imrane", "connexion"),
+            )
+            ligne = curseur.fetchone()
+    assert ligne is not None
+    details = ligne[0]
+    if isinstance(details, str):
+        details = json.loads(details)
+    assert details.get("adresse") == "203.0.113.7", details
+
+
 # ---------------------------------------------------------------------------
 # Inscription publique (création de compte) — Phase 3/5.
 #

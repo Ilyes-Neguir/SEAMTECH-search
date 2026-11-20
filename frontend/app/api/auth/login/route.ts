@@ -164,7 +164,9 @@ export async function POST(req: NextRequest) {
   try {
     reponseBackend = await fetch(`${base}/auth/connexion`, {
       method: "POST",
-      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      // L'IP du client est transmise pour le journal d'audit (details.adresse)
+      // et le verrouillage par (identifiant, IP) côté backend.
+      headers: { ...authHeaders(), "Content-Type": "application/json", "X-Forwarded-For": identifiantClient },
       body: JSON.stringify({ identifiant, mot_de_passe: motDePasse }),
       cache: "no-store",
     })
