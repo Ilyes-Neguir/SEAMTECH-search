@@ -110,6 +110,7 @@ export default defineConfig({
             // base e2e PostgreSQL fraîche : le serveur spawné est vivant
             SEAMTECH_DATABASE_URL: baseLive,
             SEAMTECH_ROOT_PATHS: path.resolve(__dirname, "../sample_data"),
+            SEAMTECH_SIGNUP_ENABLED: "true",
           }
         : undefined,
     },

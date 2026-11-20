@@ -41,6 +41,11 @@ from .securite import (
 
 LOGGER = logging.getLogger("seamtech_search.comptes")
 
+# Hash factice pour égaliser le temps de réponse quand le compte n'existe pas
+# (anti-énumération par timing : un compte inconnu doit coûter un scrypt comme
+# un mot de passe faux). Calculé une fois au chargement du module.
+_HASH_FACTICE = empreinte_mot_de_passe("factice-pour-egaliser-le-temps")
+
 if TYPE_CHECKING:  # pragma: no cover - typage seul, aucun cycle d'import
     from ..sessions_redis import RegistreSessionsRedis
 
@@ -72,6 +77,11 @@ ACTION_ECHEC = "connexion_refusee"
 MAX_ECHECS = 5
 FENETRE_ECHECS_MIN = 5
 VERROU_MIN = 5
+# Plafond par identifiant (toutes IP confondues) : un attaquant distribué
+# (chaque IP sous le seuil par IP) est arrêté par ce second compteur.
+PLAFOND_ECHECS = 30
+PLAFOND_FENETRE_MIN = 15
+PLAFOND_VERROU_MIN = 15
 
 # Rôle du compte de secours partagé (SEAMTECH_UI_PASSWORD). Il reste admin
 # technique pour ouvrir une session et créer les comptes nominatifs quand
@@ -104,6 +114,22 @@ def _maintenant() -> datetime:
 # ---------------------------------------------------------------------------
 
 
+def valider_mot_de_passe(mot_de_passe: str, identifiant: str = "") -> None:
+    """Politique de mot de passe : 12 à 256 caractères, sans l'identifiant.
+
+    Le mot de passe ne doit pas contenir l'identifiant (insensible à la casse) :
+    « imrane » / « Imrane2026!! » est refusé.
+    """
+    if not mot_de_passe:
+        raise HTTPException(status_code=422, detail="Mot de passe obligatoire.")
+    if len(mot_de_passe) < 12:
+        raise HTTPException(status_code=422, detail="Mot de passe trop court (minimum 12 caractères).")
+    if len(mot_de_passe) > 256:
+        raise HTTPException(status_code=422, detail="Mot de passe trop long (maximum 256 caractères).")
+    if identifiant and identifiant.lower() in mot_de_passe.lower():
+        raise HTTPException(status_code=422, detail="Le mot de passe ne doit pas contenir l'identifiant.")
+
+
 def creer_utilisateur(
     index: Any,  # noqa: ANN401
     identifiant: str,
@@ -123,8 +149,7 @@ def creer_utilisateur(
         raise HTTPException(status_code=422, detail="Identifiant obligatoire.")
     if role not in ROLES:
         raise HTTPException(status_code=422, detail=f"Rôle invalide : « {role} » (attendu : {', '.join(ROLES)}).")
-    if not mot_de_passe:
-        raise HTTPException(status_code=422, detail="Mot de passe obligatoire (lu sur STDIN, jamais en argument).")
+    valider_mot_de_passe(mot_de_passe, identifiant)
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             cursor.execute("SELECT id_utilisateur FROM utilisateur WHERE identifiant = %s", (identifiant,))
@@ -293,8 +318,7 @@ def reinitialiser_mot_de_passe(
 ) -> dict[str, Any]:
     """Remplace l'empreinte et force le changement à la prochaine connexion."""
     _exiger_postgres(index)
-    if not mot_de_passe:
-        raise HTTPException(status_code=422, detail="Mot de passe obligatoire (lu sur STDIN).")
+    valider_mot_de_passe(mot_de_passe, (identifiant or "").strip())
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             cursor.execute(
@@ -333,38 +357,78 @@ def _derniere_reussite(cursor: Any, identifiant: str) -> Any:  # noqa: ANN401
     return cursor.fetchone()[0]
 
 
-def _echecs_recents(cursor: Any, identifiant: str) -> list[Any]:  # noqa: ANN401
-    """Horodatages des échecs récents, du plus récent au plus ancien.
+def _echecs_recents(
+    cursor: Any,  # noqa: ANN401
+    identifiant: str,
+    adresse: str | None = None,
+    fenetre_min: int = FENETRE_ECHECS_MIN,
+    limite: int = MAX_ECHECS,
+) -> list[Any]:
+    """Horodatages des échecs récents pour (identifiant, IP), du plus récent au plus ancien.
 
     Un échec ANTÉRIEUR à la dernière connexion réussie n'est pas compté : sans
     cela, cinq fautes de frappe étalées sur la vie du compte finiraient par
     verrouiller un utilisateur légitime qui se connecte tous les jours.
+
+    ``adresse=None`` compte les échecs sans IP journalisée (appels directs au
+    backend, tests) : ``IS NOT DISTINCT FROM`` fait correspondre NULL à NULL.
+    """
+    apres = _derniere_reussite(cursor, identifiant)
+    cursor.execute(
+        "SELECT timestamp FROM audit_log WHERE actor = %s AND action = %s "
+        "AND timestamp > now() - make_interval(mins => %s) AND (%s IS NULL OR timestamp > %s) "
+        "AND details->>'adresse' IS NOT DISTINCT FROM %s "
+        "ORDER BY timestamp DESC LIMIT %s",
+        (identifiant, ACTION_ECHEC, fenetre_min, apres, apres, adresse, limite),
+    )
+    return [ligne[0] for ligne in cursor.fetchall()]
+
+
+def _echecs_plafond(cursor: Any, identifiant: str) -> list[Any]:  # noqa: ANN401
+    """Horodatages des échecs récents pour l'identifiant, toutes IP confondues.
+
+    Même remise à zéro que le verrou par IP (après la dernière connexion
+    réussie) : un utilisateur légitime qui se connecte ne doit pas être
+    pénalisé par des fautes de frappe anciennes.
     """
     apres = _derniere_reussite(cursor, identifiant)
     cursor.execute(
         "SELECT timestamp FROM audit_log WHERE actor = %s AND action = %s "
         "AND timestamp > now() - make_interval(mins => %s) AND (%s IS NULL OR timestamp > %s) "
         "ORDER BY timestamp DESC LIMIT %s",
-        (identifiant, ACTION_ECHEC, FENETRE_ECHECS_MIN, apres, apres, MAX_ECHECS),
+        (identifiant, ACTION_ECHEC, PLAFOND_FENETRE_MIN, apres, apres, PLAFOND_ECHECS),
     )
     return [ligne[0] for ligne in cursor.fetchall()]
 
 
-def verrou_actif(index: Any, identifiant: str) -> int:  # noqa: ANN401
-    """Secondes de verrouillage restantes, ou 0.
+def verrou_actif(index: Any, identifiant: str, adresse: str | None = None) -> int:  # noqa: ANN401
+    """Secondes de verrouillage restantes pour (identifiant, IP), ou 0.
+
+    Deux verrous, le plus long des deux gagne :
+
+    * par (identifiant, IP) : ``MAX_ECHECS`` échecs en ``FENETRE_ECHECS_MIN``
+      minutes verrouillent cette IP pour ``VERROU_MIN`` minutes ;
+    * par identifiant (plafond, toutes IP) : ``PLAFOND_ECHECS`` échecs en
+      ``PLAFOND_FENETRE_MIN`` minutes verrouillent l'identifiant pour
+      ``PLAFOND_VERROU_MIN`` minutes — il arrête l'attaque distribuée où
+      chaque IP reste sous le seuil par IP.
 
     Le verrou est une CONSÉQUENCE du compteur d'échecs, pas un état séparé :
-    à partir de ``MAX_ECHECS`` échecs dans la fenêtre, il court sur
-    ``VERROU_MIN`` minutes à compter du DERNIER échec.
+    il court à compter du DERNIER échec.
     """
     _exiger_postgres(index)
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
-            echecs = _echecs_recents(cursor, identifiant)
-    if len(echecs) < MAX_ECHECS:
-        return 0
-    fin = echecs[0] + timedelta(minutes=VERROU_MIN)
-    return max(0, int((fin - _maintenant()).total_seconds()))
+            echecs = _echecs_recents(cursor, identifiant, adresse)
+            plafond = _echecs_plafond(cursor, identifiant)
+    restant = 0
+    if len(echecs) >= MAX_ECHECS:
+        fin = echecs[0] + timedelta(minutes=VERROU_MIN)
+        restant = max(restant, max(0, int((fin - _maintenant()).total_seconds())))
+    if len(plafond) >= PLAFOND_ECHECS:
+        fin = plafond[0] + timedelta(minutes=PLAFOND_VERROU_MIN)
+        restant = max(restant, max(0, int((fin - _maintenant()).total_seconds())))
+    return restant
 
 
 def _noter_tentative(index: Any, identifiant: str, adresse: str | None) -> None:  # noqa: ANN401
@@ -411,7 +475,7 @@ def verifier_identifiants(
     """
     _exiger_postgres(index)
     identifiant = (identifiant or "").strip()
-    restant = verrou_actif(index, identifiant)
+    restant = verrou_actif(index, identifiant, adresse)
     if restant > 0:
         raise HTTPException(
             status_code=429,
@@ -429,7 +493,11 @@ def verifier_identifiants(
                 (identifiant,),
             )
             ligne = cursor.fetchone()
-            if ligne is None or not bool(ligne[3]) or not verifier_mot_de_passe(mot_de_passe, ligne[4]):
+            # Toujours exécuter scrypt, même si le compte n'existe pas
+            # (anti-énumération par timing).
+            empreinte = ligne[4] if ligne else _HASH_FACTICE
+            ok = verifier_mot_de_passe(mot_de_passe, empreinte)
+            if ligne is None or not bool(ligne[3]) or not ok:
                 _noter_tentative(index, identifiant, adresse)
                 LOGGER.warning("Connexion refusée (échec journalisé dans audit_log).")
                 raise HTTPException(status_code=401, detail="Identifiant ou mot de passe incorrect.")
@@ -647,8 +715,7 @@ def changer_mot_de_passe(
     reconnexion exigée partout, aucun ancien cookie ne survit.
     """
     _exiger_postgres(index)
-    if not nouveau_mot_de_passe:
-        raise HTTPException(status_code=422, detail="Nouveau mot de passe obligatoire.")
+    valider_mot_de_passe(nouveau_mot_de_passe)
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             cursor.execute(

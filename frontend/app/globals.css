@@ -1,6 +1,14 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
+@import '@fontsource/barlow-condensed/500.css';
+@import '@fontsource/barlow-condensed/600.css';
+@import '@fontsource/barlow-condensed/700.css';
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -27,8 +35,9 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
 
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-roboto-mono), ui-monospace, monospace;
+  --font-display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -43,7 +52,9 @@
    · Quart de nuit  : encre de mer profonde, ambre de signal qui veille.
    L'ambre est l'accent de marque UNIQUE (fil d'insigne cousu sur la voile) ;
    l'alerte passe à l'orange-rouge des fanaux. Contrastes ≥ 4,5:1 mesurés
-   (docs/PLAN_DIRECTEUR_V2_LOT8.md), aucun webfont (100 % local).
+   (docs/PLAN_DIRECTEUR_V2_LOT8.md). Polices bundlées localement via npm
+   (@fontsource) : Barlow Condensed (titres), IBM Plex Sans (texte),
+   IBM Plex Mono (cotes) — aucun CDN, 100 % hors-ligne.
    ========================================================================== */
 
 :root {
@@ -149,11 +160,13 @@
   background-repeat: repeat-y;
 }
 
-/* Lettres d'insigne : capitales espacées comme peintes sur la grand-voile. */
+/* Lettres d'insigne : Barlow Condensed, capitales espacées comme peintes
+   sur la grand-voile (lettrage de numéros de voile). */
 @utility titre-voile {
+  font-family: var(--font-display);
   text-transform: uppercase;
-  letter-spacing: 0.16em;
-  font-weight: 650;
+  letter-spacing: 0.12em;
+  font-weight: 600;
 }
 
 /* Badge « attention » : orange-rouge des fanaux, lisible dans les deux quarts

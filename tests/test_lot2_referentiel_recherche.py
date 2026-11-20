@@ -327,7 +327,7 @@ def test_lot2_endpoints_suggestions_et_referentiel(base_recherche: dict[str, Any
         index,
         "lot2-admin",
         "Admin Lot2",
-        "Secret!2026",
+        "Secret!2026x",
         role="admin",
         doit_changer_mot_de_passe=False,
     )
@@ -335,7 +335,7 @@ def test_lot2_endpoints_suggestions_et_referentiel(base_recherche: dict[str, Any
         index,
         "lot2-operateur",
         "Opérateur Lot2",
-        "Secret!2026",
+        "Secret!2026x",
         role="approbateur",
         doit_changer_mot_de_passe=False,
     )

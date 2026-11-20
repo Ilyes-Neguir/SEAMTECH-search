@@ -243,21 +243,21 @@ def test_aucun_appel_reseau_dans_le_module_comptes() -> None:
 
 def test_creation_compte_et_refus_des_doublons(base_comptes: dict[str, Any]) -> None:
     base = base_comptes
-    compte = _creer(base, "imrane", "Secret!2026")
+    compte = _creer(base, "imrane", "Secret!2026x")
     assert compte["id_utilisateur"] > 0
     assert compte["role"] == "approbateur"
     assert compte["doit_changer_mot_de_passe"] is True
 
     with pytest.raises(HTTPException) as doublon:
-        _creer(base, "imrane", "Autre!2026")
+        _creer(base, "imrane", "Autre!2026xx")
     assert doublon.value.status_code == 409
 
     with pytest.raises(HTTPException) as role:
-        _creer(base, "chef", "Secret!2026", role="superutilisateur")
+        _creer(base, "chef", "Secret!2026x", role="superutilisateur")
     assert role.value.status_code == 422
 
     with pytest.raises(HTTPException) as vide:
-        creer_utilisateur(base["index"], "   ", "Nom", "Secret!2026")
+        creer_utilisateur(base["index"], "   ", "Nom", "Secret!2026x")
     assert vide.value.status_code == 422
 
     identifiants = {c["identifiant"] for c in lister_utilisateurs(base["index"])}
@@ -266,9 +266,9 @@ def test_creation_compte_et_refus_des_doublons(base_comptes: dict[str, Any]) -> 
 
 def test_connexion_et_session_nominative(base_comptes: dict[str, Any]) -> None:
     base = base_comptes
-    _creer(base, "imrane", "Secret!2026")
+    _creer(base, "imrane", "Secret!2026x")
 
-    utilisateur = verifier_identifiants(base["index"], "imrane", "Secret!2026")
+    utilisateur = verifier_identifiants(base["index"], "imrane", "Secret!2026x")
     assert utilisateur["identifiant"] == "imrane"
     assert utilisateur["role"] == "approbateur"
 
@@ -305,8 +305,8 @@ def test_mot_de_passe_jamais_en_clair_dans_la_base(base_comptes: dict[str, Any])
 
 def test_deconnexion_rend_la_session_invalide(base_comptes: dict[str, Any]) -> None:
     base = base_comptes
-    _creer(base, "imrane", "Secret!2026")
-    cookie = _ouvrir_cookie(base, "imrane", "Secret!2026")
+    _creer(base, "imrane", "Secret!2026x")
+    cookie = _ouvrir_cookie(base, "imrane", "Secret!2026x")
     assert session_valide(base["index"], cookie["id_session"], cookie["jeton_session"]) is True
 
     resultat = revoquer_session(base["index"], cookie["id_session"])
@@ -324,7 +324,7 @@ def test_deconnexion_rend_la_session_invalide(base_comptes: dict[str, Any]) -> N
 
 def test_cinq_echecs_verrouillent_le_compte(base_comptes: dict[str, Any]) -> None:
     base = base_comptes
-    _creer(base, "imrane", "Secret!2026")
+    _creer(base, "imrane", "Secret!2026x")
 
     for _ in range(5):
         with pytest.raises(HTTPException) as echec:
@@ -336,7 +336,7 @@ def test_cinq_echecs_verrouillent_le_compte(base_comptes: dict[str, Any]) -> Non
 
     # Même avec le BON mot de passe : 429, pas 200.
     with pytest.raises(HTTPException) as verrou:
-        verifier_identifiants(base["index"], "imrane", "Secret!2026")
+        verifier_identifiants(base["index"], "imrane", "Secret!2026x")
     assert verrou.value.status_code == 429
     assert int(verrou.value.headers["Retry-After"]) == restant
 
@@ -347,10 +347,66 @@ def test_cinq_echecs_verrouillent_le_compte(base_comptes: dict[str, Any]) -> Non
     assert "inconnu" in inconnu.value.detail or "incorrect" in inconnu.value.detail
 
 
+def test_verrou_par_identifiant_et_ip(base_comptes: dict[str, Any]) -> None:
+    """5 échecs depuis une IP verrouillent cette IP, pas une autre.
+
+    Sans la dimension IP, un attaquant verrouillait le compte d'un tiers en
+    échouant 5 fois avec son identifiant (verrouillage par identifiant seul).
+    """
+    base = base_comptes
+    _creer(base, "imrane", "Secret!2026x")
+
+    for _ in range(5):
+        with pytest.raises(HTTPException) as echec:
+            verifier_identifiants(base["index"], "imrane", "mauvais", adresse="198.51.100.1")
+        assert echec.value.status_code == 401
+
+    assert verrou_actif(base["index"], "imrane", "198.51.100.1") > 0
+    assert verrou_actif(base["index"], "imrane", "198.51.100.2") == 0
+
+    # Depuis l'IP verrouillée, même le bon mot de passe est refusé (429).
+    # (Avant tout succès : une connexion réussie remet les échecs à zéro,
+    # sémantique historique « après la dernière réussite ».)
+    with pytest.raises(HTTPException) as verrou:
+        verifier_identifiants(base["index"], "imrane", "Secret!2026x", adresse="198.51.100.1")
+    assert verrou.value.status_code == 429
+
+    # Depuis une autre IP, le bon mot de passe passe encore.
+    assert verifier_identifiants(base["index"], "imrane", "Secret!2026x", adresse="198.51.100.2")["identifiant"] == "imrane"
+
+
+def test_plafond_par_identifiant_toutes_ip(base_comptes: dict[str, Any]) -> None:
+    """30 échecs répartis sur des IP différentes verrouillent l'identifiant.
+
+    Chaque IP reste sous le seuil par IP (5), mais le plafond par identifiant
+    (30 échecs / 15 min, toutes IP) arrête l'attaque distribuée.
+    """
+    from seamtech_search.audit import record_audit_event
+
+    base = base_comptes
+    _creer(base, "imrane", "Secret!2026x")
+
+    for i in range(30):
+        record_audit_event(
+            base["index"],
+            action="connexion_refusee",
+            actor="imrane",
+            resource="/auth/connexion",
+            status="401",
+            details={"adresse": f"198.51.100.{i + 1}"},
+        )
+
+    # Une IP fraîche (aucun échec direct) est verrouillée par le plafond.
+    assert verrou_actif(base["index"], "imrane", "203.0.113.9") > 0
+    with pytest.raises(HTTPException) as verrou:
+        verifier_identifiants(base["index"], "imrane", "Secret!2026x", adresse="203.0.113.9")
+    assert verrou.value.status_code == 429
+
+
 def test_desactivation_revoque_les_sessions_et_bloque_la_connexion(base_comptes: dict[str, Any]) -> None:
     base = base_comptes
-    _creer(base, "imrane", "Secret!2026")
-    cookie = _ouvrir_cookie(base, "imrane", "Secret!2026")
+    _creer(base, "imrane", "Secret!2026x")
+    cookie = _ouvrir_cookie(base, "imrane", "Secret!2026x")
 
     resultat = desactiver_utilisateur(base["index"], "imrane")
     assert resultat["actif"] is False
@@ -358,7 +414,7 @@ def test_desactivation_revoque_les_sessions_et_bloque_la_connexion(base_comptes:
     assert session_valide(base["index"], cookie["id_session"], cookie["jeton_session"]) is False
 
     with pytest.raises(HTTPException) as refus:
-        verifier_identifiants(base["index"], "imrane", "Secret!2026")
+        verifier_identifiants(base["index"], "imrane", "Secret!2026x")
     assert refus.value.status_code == 401
 
     with pytest.raises(HTTPException) as absent:
@@ -393,11 +449,11 @@ def test_reinitialisation_puis_changement_du_mot_de_passe(base_comptes: dict[str
 def test_api_connexion_session_deconnexion(
     base_comptes: dict[str, Any], client_comptes: TestClient
 ) -> None:
-    _creer(base_comptes, "imrane", "Secret!2026")
+    _creer(base_comptes, "imrane", "Secret!2026x")
 
     connexion = client_comptes.post(
         "/auth/connexion",
-        json={"identifiant": "imrane", "mot_de_passe": "Secret!2026"},
+        json={"identifiant": "imrane", "mot_de_passe": "Secret!2026x"},
         headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
     )
     assert connexion.status_code == 200, connexion.text
@@ -420,7 +476,7 @@ def test_api_connexion_session_deconnexion(
     for reponse in (connexion, session):
         assert "scrypt$" not in reponse.text
         assert "empreinte_mot_de_passe" not in reponse.text
-        assert "Secret!2026" not in reponse.text
+        assert "Secret!2026x" not in reponse.text
 
     deconnexion = client_comptes.post(
         "/auth/deconnexion",
@@ -446,7 +502,7 @@ def test_api_connexion_session_deconnexion(
 def test_api_mauvais_mot_de_passe_et_jeton_de_service(
     base_comptes: dict[str, Any], client_comptes: TestClient
 ) -> None:
-    _creer(base_comptes, "imrane", "Secret!2026")
+    _creer(base_comptes, "imrane", "Secret!2026x")
 
     refuse = client_comptes.post(
         "/auth/connexion",
@@ -458,20 +514,192 @@ def test_api_mauvais_mot_de_passe_et_jeton_de_service(
 
     # Sans jeton de service, pas même une tentative de connexion.
     sans_jeton = client_comptes.post(
-        "/auth/connexion", json={"identifiant": "imrane", "mot_de_passe": "Secret!2026"}
+        "/auth/connexion", json={"identifiant": "imrane", "mot_de_passe": "Secret!2026x"}
     )
     assert sans_jeton.status_code == 401
+
+
+def test_api_connexion_journalise_adresse_ip(
+    base_comptes: dict[str, Any], client_comptes: TestClient
+) -> None:
+    """L'IP transmise via X-Forwarded-For est journalisée (details.adresse).
+
+    Sans elle, le journal des connexions est inutilisable pour enquêter sur
+    un site public, et le verrouillage par (identifiant, IP) est impossible.
+    """
+    import json
+
+    _creer(base_comptes, "imrane", "Secret!2026x")
+
+    connexion = client_comptes.post(
+        "/auth/connexion",
+        json={"identifiant": "imrane", "mot_de_passe": "Secret!2026x"},
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE, "X-Forwarded-For": "203.0.113.7"},
+    )
+    assert connexion.status_code == 200, connexion.text
+
+    with base_comptes["index"].connect() as connexion_bdd:
+        with connexion_bdd.cursor() as curseur:
+            curseur.execute(
+                "SELECT details FROM audit_log WHERE actor = %s AND action = %s "
+                "ORDER BY timestamp DESC LIMIT 1",
+                ("imrane", "connexion"),
+            )
+            ligne = curseur.fetchone()
+    assert ligne is not None
+    details = ligne[0]
+    if isinstance(details, str):
+        details = json.loads(details)
+    assert details.get("adresse") == "203.0.113.7", details
+
+
+# ---------------------------------------------------------------------------
+# Inscription publique (création de compte) — Phase 3/5.
+#
+# DÉSACTIVÉE PAR DÉFAUT (SEAMTECH_SIGNUP_ENABLED=true pour l'activer) : le
+# rôle « lecture » peut lire l'archive via l'aperçu des pièces.
+# Le rôle est TOUJOURS « lecture » (jamais admin, jamais configurable par le
+# client). Validation : identifiant non vide et unique, mot de passe ≥ 12 caractères.
+# ---------------------------------------------------------------------------
+
+
+def test_api_inscription_desactivee_par_defaut(
+    base_comptes: dict[str, Any], client_comptes: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sans SEAMTECH_SIGNUP_ENABLED=true, l'inscription est refusée (403)."""
+    monkeypatch.delenv("SEAMTECH_SIGNUP_ENABLED", raising=False)
+    reponse = client_comptes.post(
+        "/auth/signup",
+        json={"identifiant": "nouveau", "mot_de_passe": "Secret!2026x"},
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+    )
+    assert reponse.status_code == 403, reponse.text
+    assert "désactivée" in reponse.json()["detail"]
+
+
+def test_api_inscription_cree_compte_lecture(
+    base_comptes: dict[str, Any], client_comptes: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SEAMTECH_SIGNUP_ENABLED", "true")
+    inscription = client_comptes.post(
+        "/auth/signup",
+        json={"identifiant": "nouveau", "nom": "Nouveau", "mot_de_passe": "Secret!2026x"},
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+    )
+    assert inscription.status_code == 200, inscription.text
+    corps = inscription.json()
+    assert corps == {"ok": True, "identifiant": "nouveau", "role": "lecture"}
+    # Aucune empreinte ni mot de passe dans la réponse.
+    assert "scrypt$" not in inscription.text
+    assert "Secret!2026x" not in inscription.text
+
+    # Le compte créé peut se connecter immédiatement.
+    connexion = client_comptes.post(
+        "/auth/connexion",
+        json={"identifiant": "nouveau", "mot_de_passe": "Secret!2026x"},
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+    )
+    assert connexion.status_code == 200, connexion.text
+    assert connexion.json()["identifiant"] == "nouveau"
+
+
+def test_api_inscription_role_jamais_admin(
+    base_comptes: dict[str, Any], client_comptes: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Même si le client demande le rôle admin, il reçoit lecture."""
+    monkeypatch.setenv("SEAMTECH_SIGNUP_ENABLED", "true")
+    inscription = client_comptes.post(
+        "/auth/signup",
+        json={
+            "identifiant": "malin",
+            "mot_de_passe": "Secret!2026x",
+            "role": "admin",
+        },
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+    )
+    assert inscription.status_code == 200, inscription.text
+    assert inscription.json()["role"] == "lecture"
+
+
+def test_api_inscription_refuse_mot_de_passe_court(
+    base_comptes: dict[str, Any], client_comptes: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SEAMTECH_SIGNUP_ENABLED", "true")
+    reponse = client_comptes.post(
+        "/auth/signup",
+        json={"identifiant": "court", "mot_de_passe": "court"},
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+    )
+    assert reponse.status_code == 422, reponse.text
+    assert "12 caractères" in reponse.json()["detail"]
+
+
+def test_valider_mot_de_passe_refuse_moins_de_12_caracteres(base_comptes: dict[str, Any]) -> None:
+    """11 caractères sont refusés (minimum 12), 12 sont acceptés."""
+    with pytest.raises(HTTPException) as court:
+        creer_utilisateur(base_comptes["index"], "imrane", "Nom", "12345678901")
+    assert court.value.status_code == 422
+    assert "12 caractères" in court.value.detail
+    compte = creer_utilisateur(base_comptes["index"], "imrane", "Nom", "123456789012")
+    assert compte["identifiant"] == "imrane"
+
+
+def test_valider_mot_de_passe_refuse_identifiant(base_comptes: dict[str, Any]) -> None:
+    """Un mot de passe contenant l'identifiant est refusé (insensible à la casse)."""
+    with pytest.raises(HTTPException) as refuse:
+        creer_utilisateur(base_comptes["index"], "imrane", "Nom", "MotDePasse-imrane-2026")
+    assert refuse.value.status_code == 422
+    assert "identifiant" in refuse.value.detail
+    with pytest.raises(HTTPException) as refuse_casse:
+        creer_utilisateur(base_comptes["index"], "imrane", "Nom", "MotDePasse-IMRANE-2026")
+    assert refuse_casse.value.status_code == 422
+
+
+def test_api_inscription_refuse_identifiant_vide(
+    base_comptes: dict[str, Any], client_comptes: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SEAMTECH_SIGNUP_ENABLED", "true")
+    reponse = client_comptes.post(
+        "/auth/signup",
+        json={"identifiant": "   ", "mot_de_passe": "Secret!2026x"},
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+    )
+    assert reponse.status_code == 422, reponse.text
+    assert "Identifiant obligatoire" in reponse.json()["detail"]
+
+
+def test_api_inscription_refuse_doublon(
+    base_comptes: dict[str, Any], client_comptes: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SEAMTECH_SIGNUP_ENABLED", "true")
+    _creer(base_comptes, "imrane", "Secret!2026x")
+    reponse = client_comptes.post(
+        "/auth/signup",
+        json={"identifiant": "imrane", "mot_de_passe": "Secret!2026x"},
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+    )
+    assert reponse.status_code == 409, reponse.text
+
+
+def test_api_inscription_sans_jeton_refusee(
+    base_comptes: dict[str, Any], client_comptes: TestClient
+) -> None:
+    reponse = client_comptes.post(
+        "/auth/signup",
+        json={"identifiant": "sansjeton", "mot_de_passe": "Secret!2026x"},
+    )
+    assert reponse.status_code == 401, reponse.text
 
 
 def test_gestion_des_comptes_reservee_administrateur(
     base_comptes: dict[str, Any], client_comptes: TestClient
 ) -> None:
     base = base_comptes
-    _creer(base, "imrane", "Secret!2026", role="approbateur")
-    _creer(base, "chef", "Secret!2026", role="admin")
+    _creer(base, "imrane", "Secret!2026x", role="approbateur")
+    _creer(base, "chef", "Secret!2026x", role="admin")
 
-    operateur = _ouvrir_cookie(base, "imrane", "Secret!2026")
-    administrateur = _ouvrir_cookie(base, "chef", "Secret!2026")
+    operateur = _ouvrir_cookie(base, "imrane", "Secret!2026x")
+    administrateur = _ouvrir_cookie(base, "chef", "Secret!2026x")
 
     sans_session = client_comptes.get("/auth/utilisateurs", headers={"X-SEAMTECH-TOKEN": JETON_SERVICE})
     assert sans_session.status_code == 401
@@ -558,8 +786,8 @@ def test_validation_attribuee_au_compte_connecte(base_comptes_corpus: dict[str, 
 
     base = base_comptes_corpus
     index = base["index"]
-    premier = _creer(base, "premier", "Secret!2026")
-    second = _creer(base, "second", "Secret!2026")
+    premier = _creer(base, "premier", "Secret!2026x")
+    second = _creer(base, "second", "Secret!2026x")
     assert premier["id_utilisateur"] != second["id_utilisateur"]
 
     config = AppConfig(
@@ -569,7 +797,7 @@ def test_validation_attribuee_au_compte_connecte(base_comptes_corpus: dict[str, 
         auth_token=JETON_SERVICE,
     )
     client = TestClient(create_app(config))
-    cookie = _ouvrir_cookie(base, "second", "Secret!2026")
+    cookie = _ouvrir_cookie(base, "second", "Secret!2026x")
     assert cookie["id_utilisateur"] == second["id_utilisateur"]
 
     code = "1001-GV-006"  # fiche a_valider du corpus
@@ -618,7 +846,7 @@ def test_validation_attribuee_au_compte_connecte(base_comptes_corpus: dict[str, 
 def test_indicateur_qualite_taux_par_utilisateur(base_comptes_corpus: dict[str, Any]) -> None:
     base = base_comptes_corpus
     index = base["index"]
-    second = _creer(base, "second", "Secret!2026")
+    second = _creer(base, "second", "Secret!2026x")
 
     from seamtech_search.fiches.routes import valider_fiche
 

@@ -26,24 +26,13 @@ test.describe("Lot 4b — comparaison de voiles", () => {
     "Lot 4b navigateur : requiert SEAMTECH_E2E_DATABASE_URL (PostgreSQL et comptes nominatifs)",
   )
 
-  test("approbateur : A/B choisis à l’écran, écarts cm réels, modèles différents dits franchement", async ({ page }) => {
+  test("approbateur : comparaison pré-remplie via ids, écarts cm réels, modèles différents dits franchement", async ({ page }) => {
     await signInWith(page, APPROBATEUR)
-    await page.getByRole("link", { name: "Comparaison" }).click()
-    await page.waitForURL(/\/comparaison$/, { timeout: 20000 })
-
-    await page.getByTestId("recherche-a").fill("1042")
-    const choixA = page.getByTestId("liste-a").getByTestId("extraction-choix")
-      .filter({ has: page.getByText("1042-EX", { exact: true }) })
-    await expect(choixA).toHaveCount(1, { timeout: 30000 })
-    await choixA.click()
-
-    const choixB = page
-      .getByTestId("liste-b")
-      .getByTestId("extraction-choix")
-      .filter({ hasText: "0901" })
-      .first()
-    await expect(choixB).toBeVisible({ timeout: 30000 })
-    await choixB.click()
+    // La comparaison ne se choisit plus à l'écran : elle arrive pré-remplie
+    // depuis /recherche (bouton « Comparaison » → /comparaison?ids=…).
+    const idA = await idExtractionParCode(page, "1042-EX")
+    const idB = await idExtractionParCode(page, "0901-MM")
+    await page.goto(`/comparaison?ids=${idA},${idB}`)
 
     await expect(page.getByTestId("tableau-dimensions")).toBeVisible({ timeout: 30000 })
     // SLU : 8,20 m (génois Sun 2000) − 6,60 m (1042-EX) = +160 cm, valeurs réelles du seed.

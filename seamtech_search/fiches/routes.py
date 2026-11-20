@@ -2222,7 +2222,7 @@ def enregistrer_routes_fiches(
             raise HTTPException(
                 status_code=410,
                 detail=(
-                    f"Le dossier d'origine n'existe plus sur le serveur ({dossier}) : "
+                    "Le dossier d'origine n'existe plus sur le serveur : "
                     "l'import a été analysé mais ses fichiers ne sont plus accessibles."
                 ),
             )
@@ -2236,7 +2236,7 @@ def enregistrer_routes_fiches(
         except DepotImpossible as erreur:
             raise HTTPException(status_code=422, detail=str(erreur)) from erreur
         lot = etat_lot(index, int(resultat.get("id_lot") or 0)) if resultat.get("id_lot") else None
-        return {**resultat, "dossier": str(dossier), "lot": lot}
+        return {**resultat, "lot": lot}
 
     @app.post("/imports/dossier", status_code=201)
     def route_deposer_dossier(

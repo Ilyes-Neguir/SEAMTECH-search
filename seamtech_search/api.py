@@ -1134,8 +1134,8 @@ def create_app(config: AppConfig) -> FastAPI:
                     record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="507")
                     raise HTTPException(status_code=507, detail=str(exc)) from exc
                 if isinstance(exc, PermissionError):
-                    record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="403")
-                    raise HTTPException(status_code=403, detail=str(exc)) from exc
+                    record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="403", details={"error": str(exc)})
+                    raise HTTPException(status_code=403, detail="Accès refusé au chemin demandé.") from exc
                 if isinstance(exc, ValueError):
                     record_audit_event(index, action="import_create", actor=actor, resource=job_id, status="400")
                     raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1148,7 +1148,7 @@ def create_app(config: AppConfig) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+            raise HTTPException(status_code=403, detail="Accès refusé au chemin demandé.") from exc
 
         task_payload = {
             "job_id": job_id,
@@ -1299,7 +1299,7 @@ def create_app(config: AppConfig) -> FastAPI:
                 if isinstance(exc, InsufficientStorageError):
                     raise HTTPException(status_code=507, detail=str(exc)) from exc
                 if isinstance(exc, PermissionError):
-                    raise HTTPException(status_code=403, detail=str(exc)) from exc
+                    raise HTTPException(status_code=403, detail="Accès refusé au chemin demandé.") from exc
                 if isinstance(exc, ValueError):
                     raise HTTPException(status_code=400, detail=str(exc)) from exc
                 raise

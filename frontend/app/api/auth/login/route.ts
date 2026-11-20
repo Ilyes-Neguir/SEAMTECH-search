@@ -5,6 +5,7 @@ import {
   MODE_SECOURS,
   CSRF_COOKIE,
   SESSION_COOKIE,
+  cleTentative,
   clearFailedAttempts,
   clientIdentifier,
   cookieMaxAgeSeconds,
@@ -12,6 +13,8 @@ import {
   createSessionToken,
   isAuthConfigured,
   lockoutRemaining,
+  lockoutSecoursGlobal,
+  noteEchecSecoursGlobal,
   noteFailedAttempt,
   passwordMatches,
   shouldMarkCookieSecure,
@@ -76,8 +79,15 @@ export async function POST(req: NextRequest) {
   const identifiant = identifiantBrut.trim() || IDENTIFIANT_SECOURS
   const motDePasse = motDePasseBrut
 
-  const identifiantClient = clientIdentifier(req.headers.get("x-forwarded-for"), req.headers.get("x-real-ip"))
-  const verrou = lockoutRemaining(identifiantClient)
+  const identifiantClient = clientIdentifier(
+    req.headers.get("x-forwarded-for"),
+    req.headers.get("x-real-ip"),
+    req.headers.get("cf-connecting-ip"),
+  )
+  // Clé séparée pour le secours : une connexion nominative réussie ne doit pas
+  // effacer le compteur du secours (voir cleTentative dans lib/auth).
+  const cle = cleTentative(identifiant, identifiantClient)
+  const verrou = lockoutRemaining(cle)
   if (verrou > 0) {
     return NextResponse.json(
       { detail: `Trop de tentatives échouées. Réessayez dans ${Math.ceil(verrou / 1000)} s.` },
@@ -112,14 +122,26 @@ export async function POST(req: NextRequest) {
         { status: 503, headers: { "Cache-Control": "no-store" } },
       )
     }
+    // Plafond global du secours (toutes IP) : un succès ne l'efface pas.
+    const verrouGlobal = lockoutSecoursGlobal()
+    if (verrouGlobal > 0) {
+      return NextResponse.json(
+        { detail: `Trop de tentatives échouées sur le compte de secours. Réessayez dans ${Math.ceil(verrouGlobal / 1000)} s.` },
+        {
+          status: 429,
+          headers: { "Cache-Control": "no-store", "Retry-After": String(Math.ceil(verrouGlobal / 1000)) },
+        },
+      )
+    }
     if (!passwordMatches(motDePasse, uiPassword())) {
-      const restantes = noteFailedAttempt(identifiantClient)
+      const restantes = noteFailedAttempt(cle)
+      noteEchecSecoursGlobal()
       return NextResponse.json(
         { detail: restantes > 0 ? `Mot de passe incorrect. ${restantes} tentative(s) restante(s).` : "Mot de passe incorrect." },
         { status: 401, headers: { "Cache-Control": "no-store" } },
       )
     }
-    clearFailedAttempts(identifiantClient)
+    clearFailedAttempts(cle)
     const reponse = NextResponse.json(
       { ok: true, mode: MODE_SECOURS, identifiant: IDENTIFIANT_SECOURS, role: ROLE_SECOURS, redirectTo: "/" },
       { status: 200, headers: { "Cache-Control": "no-store" } },
@@ -156,7 +178,9 @@ export async function POST(req: NextRequest) {
   try {
     reponseBackend = await fetch(`${base}/auth/connexion`, {
       method: "POST",
-      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      // L'IP du client est transmise pour le journal d'audit (details.adresse)
+      // et le verrouillage par (identifiant, IP) côté backend.
+      headers: { ...authHeaders(), "Content-Type": "application/json", "X-Forwarded-For": identifiantClient },
       body: JSON.stringify({ identifiant, mot_de_passe: motDePasse }),
       cache: "no-store",
     })
@@ -183,7 +207,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  clearFailedAttempts(identifiantClient)
+  clearFailedAttempts(cle)
   const reponse = NextResponse.json(
     {
       ok: true,

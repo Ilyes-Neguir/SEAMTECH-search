@@ -38,11 +38,11 @@ export const UI_PASSWORD = process.env.SEAMTECH_UI_PASSWORD ?? "e2e-shared-passw
 /** Nominative accounts seeded by e2e/seed-live-pg.py (live mode only). */
 export const OPERATEUR = {
   identifiant: "e2e-operateur",
-  motDePasse: process.env.SEAMTECH_E2E_OPERATEUR_PASSWORD ?? "e2e-operateur-password",
+  motDePasse: process.env.SEAMTECH_E2E_OPERATEUR_PASSWORD ?? "e2e-pass-operateur-2026",
 }
 export const ADMIN = {
   identifiant: "e2e-admin",
-  motDePasse: process.env.SEAMTECH_E2E_ADMIN_PASSWORD ?? "e2e-admin-password",
+  motDePasse: process.env.SEAMTECH_E2E_ADMIN_PASSWORD ?? "e2e-pass-admin-2026",
 }
 /** Lot 1 canonical aliases. OPERATEUR is kept only as the historical identifier. */
 export const APPROBATEUR = OPERATEUR
@@ -52,7 +52,7 @@ export const APPROBATEUR_2 = {
 }
 export const UTILISATEUR = {
   identifiant: "e2e-utilisateur",
-  motDePasse: process.env.SEAMTECH_E2E_UTILISATEUR_PASSWORD ?? "e2e-utilisateur-password",
+  motDePasse: process.env.SEAMTECH_E2E_UTILISATEUR_PASSWORD ?? "e2e-pass-utilisateur-2026",
 }
 // Compte réservé au parcours d'approbation : aucune autorisation héritée
 // des scénarios qui utilisent le compte utilisateur générique.
@@ -62,7 +62,7 @@ export const UTILISATEUR_PARCOURS = {
 }
 export const LECTURE = {
   identifiant: "e2e-lecture",
-  motDePasse: process.env.SEAMTECH_E2E_LECTURE_PASSWORD ?? "e2e-lecture-password",
+  motDePasse: process.env.SEAMTECH_E2E_LECTURE_PASSWORD ?? "e2e-pass-lecture-2026",
 }
 
 export type Identifiants = { identifiant?: string; motDePasse: string }

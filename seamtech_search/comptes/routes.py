@@ -21,6 +21,7 @@ Sans session valide : 401.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Annotated, Any
 
 from fastapi import Header, HTTPException
@@ -46,6 +47,7 @@ from .comptes import (
     revoquer_sessions_utilisateur,
     session_valide,
     utilisateur_dune_session,
+    valider_mot_de_passe,
     verifier_identifiants,
 )
 
@@ -290,6 +292,49 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         )
         _auditer_compte("mot_de_passe_change", utilisateur, str(utilisateur["identifiant"]))
         return {"ok": True, **resultat}
+
+    # -----------------------------------------------------------------------
+    # Inscription publique (création de compte)
+    # -----------------------------------------------------------------------
+
+    @app.post("/auth/signup")
+    def route_inscription(
+        corps: dict[str, Any],
+        token: Annotated[str | None, Header(alias="X-SEAMTECH-TOKEN")] = None,
+    ) -> dict[str, Any]:
+        """Inscription publique : crée un compte avec privilèges minimum.
+
+        DÉSACTIVÉE PAR DÉFAUT (SEAMTECH_SIGNUP_ENABLED=true pour l'activer).
+        Le rôle ``lecture`` peut lire l'archive via l'aperçu des pièces :
+        ouvrir l'inscription expose les documents clients à quiconque.
+        Aucune session requise (seul le jeton de service est vérifié).
+        Le rôle est TOUJOURS ``lecture`` (ROLE_DEFAUT) — jamais admin.
+        Validation : identifiant non vide et unique, mot de passe ≥ 12 caractères.
+        """
+        verifier_auth(config, token)
+        if os.environ.get("SEAMTECH_SIGNUP_ENABLED", "false").lower() != "true":
+            raise HTTPException(
+                status_code=403,
+                detail="Création de compte désactivée : demandez un compte à l'administrateur.",
+            )
+        _exiger_postgres(index)
+        identifiant = str(corps.get("identifiant") or "").strip()
+        mot_de_passe = str(corps.get("mot_de_passe") or "")
+        if not identifiant:
+            raise HTTPException(status_code=422, detail="Identifiant obligatoire.")
+        valider_mot_de_passe(mot_de_passe, identifiant)
+        # Rôle forcé à lecture — jamais admin, jamais configurable par le client.
+        resultat = creer_utilisateur(
+            index,
+            identifiant,
+            str(corps.get("nom") or ""),
+            mot_de_passe,
+            ROLE_DEFAUT,
+            doit_changer_mot_de_passe=False,
+        )
+        LOGGER.info("Inscription publique : compte créé (rôle %s).", resultat.get("role"))
+        _auditer_compte("inscription", resultat, identifiant, {"role": resultat["role"]})
+        return {"ok": True, "identifiant": resultat["identifiant"], "role": resultat["role"]}
 
     # -----------------------------------------------------------------------
     # Gestion des comptes — admin uniquement

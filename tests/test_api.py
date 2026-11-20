@@ -89,14 +89,18 @@ def test_import_nonexistent_path_is_a_client_error(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("exception_type", "expected_status"),
-    [(PermissionError, 403), (ValueError, 400)],
+    ("exception_type", "expected_status", "expected_detail"),
+    [
+        (PermissionError, 403, "Accès refusé au chemin demandé."),
+        (ValueError, 400, "simulated import error"),
+    ],
 )
 def test_sync_import_maps_service_errors_to_http(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     exception_type: type[Exception],
     expected_status: int,
+    expected_detail: str,
 ) -> None:
     root = tmp_path / "root"
     source = root / "source"
@@ -110,7 +114,7 @@ def test_sync_import_maps_service_errors_to_http(
     response = client.post("/imports?wait=true", json={"source_path": str(source)})
 
     assert response.status_code == expected_status
-    assert response.json()["detail"] == "simulated import error"
+    assert response.json()["detail"] == expected_detail
 
 
 def test_local_mode_allows_search_without_token(tmp_path: Path) -> None:

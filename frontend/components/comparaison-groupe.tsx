@@ -24,7 +24,6 @@ import { AlertTriangle, CheckCircle2 } from "lucide-react"
 import { authedFetch } from "@/lib/authed-fetch"
 import { cn } from "@/lib/utils"
 import {
-  MAX_FICHES_GROUPE,
   classeEcart,
   formaterNombre,
   formaterSigne,
@@ -54,14 +53,24 @@ const BLOCS: { cle: keyof ComparaisonGroupeReponse["blocs"]; titre: string }[] =
   { cle: "qualite", titre: "Qualité & traçabilité" },
 ]
 
-export function ComparaisonGroupe({ extractions }: { extractions: ResumeExtraction[] }) {
-  const [selection, setSelection] = useState<number[]>([])
+export function ComparaisonGroupe({
+  extractions,
+  idsInitiaux = [],
+}: {
+  extractions: ResumeExtraction[]
+  idsInitiaux?: number[]
+}) {
+  const [selection, setSelection] = useState<number[]>(idsInitiaux)
   const [reference, setReference] = useState<number | null>(null)
   const [resultat, setResultat] = useState<ComparaisonGroupeReponse | null>(null)
   const [erreur, setErreur] = useState<string | null>(null)
   const [ecartsSeulement, setEcartsSeulement] = useState(false)
-  const [recherche, setRecherche] = useState("")
   const generation = useRef(0)
+
+  // Les ids viennent de /recherche (pré-remplis) : on les adopte tels quels.
+  useEffect(() => {
+    setSelection(idsInitiaux)
+  }, [idsInitiaux])
 
   // La sélection peut contenir un identifiant qui n'est plus dans la liste
   // (extraction supprimée entre deux chargements) : on ne compare que ce qui
@@ -97,20 +106,6 @@ export function ComparaisonGroupe({ extractions }: { extractions: ResumeExtracti
       })
   }, [cleSelection, referenceEffective])
 
-  function basculer(id: number) {
-    setSelection((precedente) => {
-      if (precedente.includes(id)) return precedente.filter((x) => x !== id)
-      if (precedente.length >= MAX_FICHES_GROUPE) return precedente
-      return [...precedente, id]
-    })
-  }
-
-  const liste = extractions.filter((e) => {
-    if (!recherche.trim()) return true
-    const texte = `${nomFiche(e)} ${e.type_voile ?? ""} ${nomModele(e)} ${e.gamme ?? ""}`.toLowerCase()
-    return texte.includes(recherche.trim().toLowerCase())
-  })
-
   /** Masquer ce qui ne diffère pas, mais ne jamais le faire en silence. */
   function ligneVisible(ligne: LigneComparaison): boolean {
     if (!ecartsSeulement) return true
@@ -129,59 +124,18 @@ export function ComparaisonGroupe({ extractions }: { extractions: ResumeExtracti
       <section className="rounded border border-border p-3" data-testid="selection-groupe">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-xs font-semibold">
-            Fiches à comparer — {idsActifs.length} sélectionnée(s), {MAX_FICHES_GROUPE} au plus
+            Fiches à comparer — {idsActifs.length} (issues de la recherche)
           </h3>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setEcartsSeulement((v) => !v)}
-              className="rounded border border-border px-2 py-1 text-xs hover:bg-accent/50"
-              data-testid="bascule-ecarts"
-              aria-pressed={ecartsSeulement}
-            >
-              {ecartsSeulement ? "Tout afficher" : "Écarts seulement"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSelection([])
-                setReference(null)
-              }}
-              className="rounded border border-border px-2 py-1 text-xs hover:bg-accent/50"
-              data-testid="vider-selection"
-            >
-              Vider
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setEcartsSeulement((v) => !v)}
+            className="rounded border border-border px-2 py-1 text-xs hover:bg-accent/50"
+            data-testid="bascule-ecarts"
+            aria-pressed={ecartsSeulement}
+          >
+            {ecartsSeulement ? "Tout afficher" : "Écarts seulement"}
+          </button>
         </div>
-
-        <input
-          value={recherche}
-          onChange={(e) => setRecherche(e.target.value)}
-          placeholder="Filtrer (code, type, bateau, gamme)…"
-          className="mb-2 w-full rounded border border-border bg-input px-2 py-1 text-xs text-foreground"
-          data-testid="recherche-groupe"
-          aria-label="Filtrer les fiches à comparer"
-        />
-
-        <ul className="max-h-56 space-y-0.5 overflow-y-auto" data-testid="liste-groupe">
-          {liste.map((extraction) => (
-            <li key={extraction.id_extraction}>
-              <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-accent/40">
-                <input
-                  type="checkbox"
-                  checked={selection.includes(extraction.id_extraction)}
-                  onChange={() => basculer(extraction.id_extraction)}
-                  data-testid={`case-groupe-${extraction.id_extraction}`}
-                />
-                <span className="font-mono font-semibold">{nomFiche(extraction)}</span>
-                <span className="truncate text-muted-foreground">
-                  {extraction.type_voile ?? "type non lu"} · {nomModele(extraction)}
-                </span>
-              </label>
-            </li>
-          ))}
-        </ul>
 
         {idsActifs.length > 1 && (
           <div className="mt-2 flex items-center gap-2 border-t border-border pt-2">
@@ -210,11 +164,6 @@ export function ComparaisonGroupe({ extractions }: { extractions: ResumeExtracti
           </div>
         )}
 
-        {idsActifs.length < 2 && (
-          <p className="mt-2 text-xs text-muted-foreground" data-testid="invite-selection">
-            Sélectionnez au moins deux fiches.
-          </p>
-        )}
       </section>
 
       {erreur && (

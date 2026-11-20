@@ -373,7 +373,8 @@ class TestCreerFicheDepuisImport:
         corps = reponse.json()
         assert corps["statut"] == "traite"
         assert corps["fiche"] == "ZZ 075A"
-        assert corps["dossier"] == str(dossier)
+        # Sécurité : la réponse ne doit pas fuiter le chemin serveur du dossier.
+        assert "dossier" not in corps
         with contexte["index"].connect() as connexion:
             with connexion.cursor() as cursor:
                 cursor.execute("SELECT code FROM fiche")

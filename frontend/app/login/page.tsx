@@ -40,5 +40,9 @@ export default async function LoginPage() {
     )
   }
 
-  return <LoginForm />
+  // L'inscription publique est désactivée par défaut côté backend
+  // (SEAMTECH_SIGNUP_ENABLED) : on ne propose pas « Créer un compte » si le
+  // serveur refuserait de toute façon (403). La page est en force-dynamic :
+  // la variable est lue à chaque requête, pas figée au build.
+  return <LoginForm signupEnabled={process.env.SEAMTECH_SIGNUP_ENABLED === "true"} />
 }

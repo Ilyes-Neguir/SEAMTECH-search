@@ -311,7 +311,7 @@ def test_lot0b_postgres_audit_append_only_et_gardes(tmp_path: Path) -> None:
             index,
             "admin-lot0b",
             "Administrateur Lot 0b",
-            "mot-de-passe-admin-lot0b",
+            "mot-de-passe-admin-atelier",
             role="admin",
             doit_changer_mot_de_passe=False,
         )
@@ -319,7 +319,7 @@ def test_lot0b_postgres_audit_append_only_et_gardes(tmp_path: Path) -> None:
             index,
             "operateur-lot0b",
             "Opérateur Lot 0b",
-            "mot-de-passe-operateur-lot0b",
+            "mot-de-passe-operateur-atelier",
             role="approbateur",
             doit_changer_mot_de_passe=False,
         )

@@ -556,19 +556,19 @@ def semer_comptes(idx) -> None:
             "e2e-operateur",
             "Approbateur e2e",
             "approbateur",
-            os.environ.get("SEAMTECH_E2E_OPERATEUR_PASSWORD", "e2e-operateur-password"),
+            os.environ.get("SEAMTECH_E2E_OPERATEUR_PASSWORD", "e2e-pass-operateur-2026"),
         ),
         (
             "e2e-admin",
             "Administrateur e2e",
             "admin",
-            os.environ.get("SEAMTECH_E2E_ADMIN_PASSWORD", "e2e-admin-password"),
+            os.environ.get("SEAMTECH_E2E_ADMIN_PASSWORD", "e2e-pass-admin-2026"),
         ),
         (
             "e2e-utilisateur",
             "Utilisateur e2e",
             "utilisateur",
-            os.environ.get("SEAMTECH_E2E_UTILISATEUR_PASSWORD", "e2e-utilisateur-password"),
+            os.environ.get("SEAMTECH_E2E_UTILISATEUR_PASSWORD", "e2e-pass-utilisateur-2026"),
         ),
         (
             "e2e-utilisateur-parcours",
@@ -580,7 +580,7 @@ def semer_comptes(idx) -> None:
             "e2e-lecture",
             "Lecture e2e",
             "lecture",
-            os.environ.get("SEAMTECH_E2E_LECTURE_PASSWORD", "e2e-lecture-password"),
+            os.environ.get("SEAMTECH_E2E_LECTURE_PASSWORD", "e2e-pass-lecture-2026"),
         ),
         (
             "e2e-approbateur-2",

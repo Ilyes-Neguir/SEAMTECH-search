@@ -105,7 +105,7 @@ if [ ! -f .env ]; then
         echo "SEAMTECH_S3_BUCKET=seamtech-documents"
         echo "SEAMTECH_BACKUP_BUCKET=seamtech-backups"
         echo "SEAMTECH_ROOT_PATHS=$SOURCES_CONTENEUR:/app/data/recette-lot:/app/data:/app/sample_data"
-        echo "RECETTE_MOT_DE_PASSE=seamtech-recette-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+        echo "RECETTE_MOT_DE_PASSE=seamtech-compte-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
       } > .env
     )
     CREATION="créé avec 11 secrets aléatoires"
@@ -114,7 +114,7 @@ else
     grep -q '^SEAMTECH_ROOT_PATHS=' .env || \
         echo "SEAMTECH_ROOT_PATHS=$SOURCES_CONTENEUR:/app/data/recette-lot:/app/data:/app/sample_data" >> .env
     grep -q '^RECETTE_MOT_DE_PASSE=' .env || \
-        echo "RECETTE_MOT_DE_PASSE=seamtech-recette-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" >> .env
+        echo "RECETTE_MOT_DE_PASSE=seamtech-compte-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" >> .env
     # Identités de stockage : un .env antérieur au correctif n'en a pas — on les
     # ajoute (rotation par régénération, le provisionnement recrée les comptes).
     for var in SEAMTECH_S3_ACCESS_KEY SEAMTECH_S3_SECRET_KEY SEAMTECH_BACKUP_ACCESS_KEY SEAMTECH_BACKUP_SECRET_KEY; do
@@ -275,7 +275,7 @@ echo "Sources en zone de travail : $NB_ZIP ZIP du dépôt + $NB_EXTRA chemin(s) 
 # ---------------------------------------------------------------------------
 # 7. Vérificateur fonctionnel unique, exécuté DANS le conteneur web.
 # ---------------------------------------------------------------------------
-export RECETTE_MOT_DE_PASSE="${RECETTE_MOT_DE_PASSE:-seamtech-recette-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')}"
+export RECETTE_MOT_DE_PASSE="${RECETTE_MOT_DE_PASSE:-seamtech-compte-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')}"
 grep -q '^RECETTE_MOT_DE_PASSE=' .env || echo "RECETTE_MOT_DE_PASSE=$RECETTE_MOT_DE_PASSE" >> .env
 SORTIE_VERIF="$(docker compose exec -T \
     -e RECETTE_SOURCES="$SOURCES_CONTENEUR" \

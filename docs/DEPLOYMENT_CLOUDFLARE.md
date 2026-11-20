@@ -43,6 +43,15 @@ le service local. Avantages pour cette application :
   uniquement** — exactement le modèle `SEAMTECH_BEHIND_TLS_PROXY=true` que
   l'application exige pour l'authentification par jeton sur hôte non-local.
 
+> ⚠️ **Réserve de sécurité (revue externe 2026-11-20)** : le frontend fait
+> confiance à l'en-tête `cf-connecting-ip` pour identifier le client
+> (`clientIdentifier` dans `frontend/lib/auth.ts`), ce qui fonde le
+> verrouillage des tentatives de connexion. C'est sûr **uniquement** si le
+> frontend n'est joignable que par le tunnel Cloudflare : si un port est
+> exposé en direct sur internet, un attaquant peut forger cet en-tête à
+> chaque essai et contourner le verrou. **Ne jamais exposer le port du
+> frontend en direct — tunnel seul.**
+
 ## Prérequis
 
 - Un hôte (VPS ou machine) avec Docker et Docker Compose, capable de faire

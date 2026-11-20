@@ -880,7 +880,7 @@ jobs:
       MINIO_ROOT_PASSWORD: minioadmin123
       REDIS_PASSWORD: redis_test_password
       SEAMTECH_AUTH_TOKEN: test-token-123
-      SEAMTECH_UI_PASSWORD: ci-ui-password
+      SEAMTECH_UI_PASSWORD: ci-ui-password-2026
       SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
       SEAMTECH_S3_BUCKET: seamtech-documents
       SEAMTECH_BACKUP_BUCKET: seamtech-backups
@@ -932,7 +932,7 @@ jobs:
           # Required by docker-compose.yml since the UI sign-in gate (audit
           # issue #5, Option B): ${VAR:?...} makes `docker compose config` fail
           # without them, even when only the infra services are started.
-          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_UI_PASSWORD: ci-ui-password-2026
           SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
         run: |
           # Validate interpolation/schema up front so a config error fails
@@ -956,7 +956,7 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
           SEAMTECH_AUTH_TOKEN: test-token-123
-          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_UI_PASSWORD: ci-ui-password-2026
           SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
         run: |
           python - << 'PY'
@@ -1033,7 +1033,7 @@ jobs:
           # Required by docker-compose.yml since the UI sign-in gate (audit
           # issue #5, Option B): ${VAR:?...} makes `docker compose config` fail
           # without them, even when only the infra services are started.
-          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_UI_PASSWORD: ci-ui-password-2026
           SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
           SEAMTECH_S3_BUCKET: seamtech-documents
         run: |
@@ -1118,7 +1118,7 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
           SEAMTECH_AUTH_TOKEN: test-token-123
-          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_UI_PASSWORD: ci-ui-password-2026
           SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
         run: |
           set -euo pipefail
@@ -1165,7 +1165,7 @@ jobs:
           # Required by docker-compose.yml since the UI sign-in gate (audit
           # issue #5, Option B): ${VAR:?...} makes `docker compose config` fail
           # without them, even when only the infra services are started.
-          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_UI_PASSWORD: ci-ui-password-2026
           SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
           SEAMTECH_S3_BUCKET: seamtech-documents
           # Compte nominatif de la preuve : identités de TEST, jamais de
@@ -1205,7 +1205,7 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
           SEAMTECH_AUTH_TOKEN: test-token-123
-          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_UI_PASSWORD: ci-ui-password-2026
           SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
           SEAMTECH_S3_BUCKET: seamtech-documents
           SEAMTECH_PREUVE_UTILISATEUR: approbateur-preuve
@@ -1250,7 +1250,7 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
           SEAMTECH_AUTH_TOKEN: test-token-123
-          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_UI_PASSWORD: ci-ui-password-2026
           SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
           SEAMTECH_S3_BUCKET: seamtech-documents
         run: |
@@ -1305,7 +1305,7 @@ jobs:
           # Required by docker-compose.yml since the UI sign-in gate (audit
           # issue #5, Option B): ${VAR:?...} makes `docker compose config` fail
           # without them, even when only the infra services are started.
-          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_UI_PASSWORD: ci-ui-password-2026
           SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
           SEAMTECH_S3_BUCKET: seamtech-documents
           # CI guarantees the infra is healthy above: the test must not swallow
@@ -1837,23 +1837,24 @@ jobs:
           flaky = stats.get("flaky", 0)
           sautes = stats.get("skipped", 0)
           inattendus = stats.get("unexpected", 0)
-          # 34 tests : 23 sondes anonymes (dont les 8 routes Lot 1
+          # Au moins 38 tests : 23 sondes anonymes (dont les 8 routes Lot 1
           # d'approbation et de notification), 7 parcours de session de
-          # secours/santé, et 4 parcours de comptes nominatifs. Le compte reste
-          # EXACT et strict : premier essai uniquement, aucun saut en CI.
-          if sautes or flaky or inattendus or passes != 34:
+          # secours/santé, et 8 parcours de comptes nominatifs (dont 4
+          # d'inscription publique, Phase 3/5). Le compte est un PLANCHER :
+          # ajouter un test ne doit jamais faire échouer la CI.
+          if sautes or flaky or inattendus or passes < 38:
               # Message aussi en annotation : c'est le seul canal lisible en CI.
               print(
-                  f"::error title=e2e-auth-count::attendu 34 tests passés au premier essai, "
+                  f"::error title=e2e-auth-count::attendu au moins 38 tests passés au premier essai, "
                   f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
                   f"{sautes} sautés, {inattendus} en échec"
               )
               raise SystemExit(
-                  f"GARDE-FOU e2e auth : attendu 34 tests passés au premier essai, "
+                  f"GARDE-FOU e2e auth : attendu au moins 38 tests passés au premier essai, "
                   f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
                   f"{sautes} sautés, {inattendus} en échec."
               )
-          print("::notice title=e2e-auth-nominatif::34 tests verts au premier essai (dont 4 sur les comptes nominatifs)")
+          print(f"::notice title=e2e-auth-nominatif::{passes} tests verts au premier essai (dont 8 sur les comptes nominatifs)")
           PY
 
       # Lot 1 — parcours navigateur complets des quatre rôles : demande de
@@ -2938,6 +2939,7 @@ jobs:
               "SEAMTECH_API_URL": "http://127.0.0.1:8123",
               "SEAMTECH_UI_PASSWORD": os.environ["SEAMTECH_UI_PASSWORD"],
               "SEAMTECH_SESSION_SECRET": os.environ["SEAMTECH_SESSION_SECRET"],
+              "SEAMTECH_SIGNUP_ENABLED": "true",
               "NEXT_TELEMETRY_DISABLED": "1",
           }
           ecrire_fichier_prive(Path("/tmp/env-hors-ligne.sh"), "".join(

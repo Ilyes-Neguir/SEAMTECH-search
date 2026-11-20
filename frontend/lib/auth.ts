@@ -33,29 +33,37 @@ import { cookies } from "next/headers"
 import { NextResponse } from "next/server"
 import { CSRF_COOKIE, SESSION_COOKIE } from "@/lib/security-cookies"
 import { normaliserRole, roleOuLecture, type Role } from "@/lib/roles"
+import {
+  IDENTIFIANT_SECOURS,
+  cleTentative,
+  clearFailedAttempts,
+  lockoutRemaining,
+  lockoutSecoursGlobal,
+  noteEchecSecoursGlobal,
+  noteFailedAttempt,
+  resetFailedAttempts,
+} from "./throttling.ts"
+import { isAuthConfigured, secretInacceptable, uiPassword } from "./secrets.ts"
 
 export { CSRF_COOKIE, SESSION_COOKIE }
+export {
+  IDENTIFIANT_SECOURS,
+  cleTentative,
+  clearFailedAttempts,
+  lockoutRemaining,
+  lockoutSecoursGlobal,
+  noteEchecSecoursGlobal,
+  noteFailedAttempt,
+  resetFailedAttempts,
+}
+export { isAuthConfigured, uiPassword }
 
 const TOKEN_VERSION = "v2"
 const DEFAULT_SESSION_HOURS = 8
 const MAX_TOKEN_AGE_MS = 1000 * 60 * 60 * 24 * 30 // refuse absurd expiry claims
 
-// The rescue account. Its password is the historical SEAMTECH_UI_PASSWORD and
-// it exists so an operator can still get in when no nominative account does.
-// It is deliberately NOT a database row: it therefore has no session to revoke
-// and no identity to attribute. Known, documented limitation — see docs/API.md.
-export const IDENTIFIANT_SECOURS = "secours"
 export const MODE_SECOURS = "secours"
 export const MODE_NOMINATIF = "nominatif"
-
-// Login throttling for the rescue path. The nominative path is throttled by the
-// BACKEND (5 failures / 5 minutes, in the database, survives a restart); this
-// in-memory map only covers the shared password, and is documented as
-// per-process.
-const MAX_FAILED_ATTEMPTS = 5
-const FAILURE_WINDOW_MS = 5 * 60 * 1000
-const LOCKOUT_MS = 5 * 60 * 1000
-const failures = new Map<string, { count: number; first: number; lockedUntil: number }>()
 
 let processSecret: string | null = null
 
@@ -79,54 +87,6 @@ function stableCompare(a: string, b: string): boolean {
   const right = Buffer.from(b)
   if (left.length !== right.length) return false
   return timingSafeEqual(left, right)
-}
-
-/**
- * Lot PROD — example secrets are "not configured". `.env.example` publishes
- * placeholder values (« change-me »); accepting them would sign sessions and
- * guard the rescue account with public knowledge. Mirrors the backend
- * `exiger_secrets_production` (config.py): placeholder or shorter than 8
- * characters → unconfigured, and the login page keeps failing closed with
- * its explicit "not configured" screen instead of silently running open.
- */
-const SECRETS_EXEMPLES = new Set([
-  "change-me",
-  "changeme",
-  "change_me",
-  "changez-moi",
-  "exemple",
-  "example",
-  "motdepasse",
-  "mot-de-passe",
-  "password",
-  "votre-secret",
-  "votre-mot-de-passe",
-])
-
-function secretInacceptable(valeur: string): boolean {
-  const nettoyee = valeur.trim()
-  return SECRETS_EXEMPLES.has(nettoyee.toLowerCase()) || nettoyee.length < 8
-}
-
-/**
- * The shared rescue password. Empty string means "not configured", which makes
- * the rescue path fail — the nominative accounts (backend side) remain the way
- * in, and with no password at all nobody authenticates.
- */
-export function uiPassword(): string {
-  const brut = process.env.SEAMTECH_UI_PASSWORD?.trim() ?? ""
-  if (brut && secretInacceptable(brut)) {
-    console.error(
-      "[auth] SEAMTECH_UI_PASSWORD is an example/too-short value: treated as NOT configured. " +
-        "Generate a dedicated secret (see .env.example).",
-    )
-    return ""
-  }
-  return brut
-}
-
-export function isAuthConfigured(): boolean {
-  return uiPassword().length > 0
 }
 
 /**
@@ -295,43 +255,6 @@ export async function requireAuth(): Promise<NextResponse | null> {
   )
 }
 
-function attemptKey(identifier: string): string {
-  return identifier || "unknown"
-}
-
-/** Remaining lockout in ms for an identifier, or 0 when not locked out. */
-export function lockoutRemaining(identifier: string, now: number = Date.now()): number {
-  const entry = failures.get(attemptKey(identifier))
-  if (!entry) return 0
-  if (entry.lockedUntil > now) return entry.lockedUntil - now
-  return 0
-}
-
-export function noteFailedAttempt(identifier: string, now: number = Date.now()): number {
-  const key = attemptKey(identifier)
-  const entry = failures.get(key)
-  if (!entry || now - entry.first > FAILURE_WINDOW_MS) {
-    failures.set(key, { count: 1, first: now, lockedUntil: 0 })
-    return MAX_FAILED_ATTEMPTS - 1
-  }
-  entry.count += 1
-  let remaining = MAX_FAILED_ATTEMPTS - entry.count
-  if (entry.count >= MAX_FAILED_ATTEMPTS) {
-    entry.lockedUntil = now + LOCKOUT_MS
-    remaining = 0
-  }
-  return Math.max(0, remaining)
-}
-
-export function clearFailedAttempts(identifier: string): void {
-  failures.delete(attemptKey(identifier))
-}
-
-/** Test/maintenance hook: drop all throttling state. */
-export function resetFailedAttempts(): void {
-  failures.clear()
-}
-
 /**
  * Constant-time password check. Both sides are hashed first so differing
  * lengths cannot be distinguished by timing or by timingSafeEqual throwing.
@@ -343,10 +266,24 @@ export function passwordMatches(candidate: string, expected: string): boolean {
   return timingSafeEqual(left, right)
 }
 
-/** Best-effort client identifier for throttling (behind a proxy or not). */
-export function clientIdentifier(forwardedFor: string | null, fallbackIp: string | null): string {
-  const first = forwardedFor?.split(",")[0]?.trim()
-  return first || fallbackIp || "unknown"
+/**
+ * Best-effort client identifier for throttling (behind a proxy or not).
+ *
+ * Behind Cloudflare, `cf-connecting-ip` is set by the edge to the real
+ * client IP and cannot be spoofed. X-Forwarded-For is client-controlled
+ * at the START (proxies append at the END), so we take the LAST element
+ * — the one added by the nearest trusted proxy.
+ */
+export function clientIdentifier(
+  forwardedFor: string | null,
+  fallbackIp: string | null,
+  cfConnectingIp?: string | null,
+): string {
+  const cf = cfConnectingIp?.trim()
+  if (cf) return cf
+  const parts = forwardedFor?.split(",").map((p) => p.trim()).filter(Boolean)
+  const last = parts?.[parts.length - 1]
+  return last || fallbackIp || "unknown"
 }
 
 export function cookieMaxAgeSeconds(lifetimeMs: number = sessionLifetimeMs()): number {
