@@ -33,29 +33,31 @@ import { cookies } from "next/headers"
 import { NextResponse } from "next/server"
 import { CSRF_COOKIE, SESSION_COOKIE } from "@/lib/security-cookies"
 import { normaliserRole, roleOuLecture, type Role } from "@/lib/roles"
+import {
+  IDENTIFIANT_SECOURS,
+  cleTentative,
+  clearFailedAttempts,
+  lockoutRemaining,
+  noteFailedAttempt,
+  resetFailedAttempts,
+} from "./throttling.ts"
 
 export { CSRF_COOKIE, SESSION_COOKIE }
+export {
+  IDENTIFIANT_SECOURS,
+  cleTentative,
+  clearFailedAttempts,
+  lockoutRemaining,
+  noteFailedAttempt,
+  resetFailedAttempts,
+}
 
 const TOKEN_VERSION = "v2"
 const DEFAULT_SESSION_HOURS = 8
 const MAX_TOKEN_AGE_MS = 1000 * 60 * 60 * 24 * 30 // refuse absurd expiry claims
 
-// The rescue account. Its password is the historical SEAMTECH_UI_PASSWORD and
-// it exists so an operator can still get in when no nominative account does.
-// It is deliberately NOT a database row: it therefore has no session to revoke
-// and no identity to attribute. Known, documented limitation — see docs/API.md.
-export const IDENTIFIANT_SECOURS = "secours"
 export const MODE_SECOURS = "secours"
 export const MODE_NOMINATIF = "nominatif"
-
-// Login throttling for the rescue path. The nominative path is throttled by the
-// BACKEND (5 failures / 5 minutes, in the database, survives a restart); this
-// in-memory map only covers the shared password, and is documented as
-// per-process.
-const MAX_FAILED_ATTEMPTS = 5
-const FAILURE_WINDOW_MS = 5 * 60 * 1000
-const LOCKOUT_MS = 5 * 60 * 1000
-const failures = new Map<string, { count: number; first: number; lockedUntil: number }>()
 
 let processSecret: string | null = null
 
@@ -293,43 +295,6 @@ export async function requireAuth(): Promise<NextResponse | null> {
     { detail: "Authentication required. Sign in at /login." },
     { status: 401, headers: { "Cache-Control": "no-store" } },
   )
-}
-
-function attemptKey(identifier: string): string {
-  return identifier || "unknown"
-}
-
-/** Remaining lockout in ms for an identifier, or 0 when not locked out. */
-export function lockoutRemaining(identifier: string, now: number = Date.now()): number {
-  const entry = failures.get(attemptKey(identifier))
-  if (!entry) return 0
-  if (entry.lockedUntil > now) return entry.lockedUntil - now
-  return 0
-}
-
-export function noteFailedAttempt(identifier: string, now: number = Date.now()): number {
-  const key = attemptKey(identifier)
-  const entry = failures.get(key)
-  if (!entry || now - entry.first > FAILURE_WINDOW_MS) {
-    failures.set(key, { count: 1, first: now, lockedUntil: 0 })
-    return MAX_FAILED_ATTEMPTS - 1
-  }
-  entry.count += 1
-  let remaining = MAX_FAILED_ATTEMPTS - entry.count
-  if (entry.count >= MAX_FAILED_ATTEMPTS) {
-    entry.lockedUntil = now + LOCKOUT_MS
-    remaining = 0
-  }
-  return Math.max(0, remaining)
-}
-
-export function clearFailedAttempts(identifier: string): void {
-  failures.delete(attemptKey(identifier))
-}
-
-/** Test/maintenance hook: drop all throttling state. */
-export function resetFailedAttempts(): void {
-  failures.clear()
 }
 
 /**

@@ -5,6 +5,7 @@ import {
   MODE_SECOURS,
   CSRF_COOKIE,
   SESSION_COOKIE,
+  cleTentative,
   clearFailedAttempts,
   clientIdentifier,
   cookieMaxAgeSeconds,
@@ -81,7 +82,10 @@ export async function POST(req: NextRequest) {
     req.headers.get("x-real-ip"),
     req.headers.get("cf-connecting-ip"),
   )
-  const verrou = lockoutRemaining(identifiantClient)
+  // Clé séparée pour le secours : une connexion nominative réussie ne doit pas
+  // effacer le compteur du secours (voir cleTentative dans lib/auth).
+  const cle = cleTentative(identifiant, identifiantClient)
+  const verrou = lockoutRemaining(cle)
   if (verrou > 0) {
     return NextResponse.json(
       { detail: `Trop de tentatives échouées. Réessayez dans ${Math.ceil(verrou / 1000)} s.` },
@@ -117,13 +121,13 @@ export async function POST(req: NextRequest) {
       )
     }
     if (!passwordMatches(motDePasse, uiPassword())) {
-      const restantes = noteFailedAttempt(identifiantClient)
+      const restantes = noteFailedAttempt(cle)
       return NextResponse.json(
         { detail: restantes > 0 ? `Mot de passe incorrect. ${restantes} tentative(s) restante(s).` : "Mot de passe incorrect." },
         { status: 401, headers: { "Cache-Control": "no-store" } },
       )
     }
-    clearFailedAttempts(identifiantClient)
+    clearFailedAttempts(cle)
     const reponse = NextResponse.json(
       { ok: true, mode: MODE_SECOURS, identifiant: IDENTIFIANT_SECOURS, role: ROLE_SECOURS, redirectTo: "/" },
       { status: 200, headers: { "Cache-Control": "no-store" } },
@@ -187,7 +191,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  clearFailedAttempts(identifiantClient)
+  clearFailedAttempts(cle)
   const reponse = NextResponse.json(
     {
       ok: true,
