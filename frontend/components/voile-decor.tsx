@@ -47,7 +47,6 @@ void main() {
 const FRAG = `
 precision mediump float;
 uniform vec3 uCouleur;
-uniform vec3 uFond;
 uniform float uTemps;
 varying vec2 vUv;
 varying float vPlis;
@@ -62,8 +61,9 @@ void main() {
   // Bordure fine (guindant/chute) : fondu vers le fond en bordure.
   float bord = smoothstep(0.0, 0.04, vUv.x) * smoothstep(1.0, 0.96, vUv.x)
              * smoothstep(0.0, 0.03, vUv.y) * smoothstep(1.0, 0.97, vUv.y);
-  col = mix(uFond, col, bord);
-  gl_FragColor = vec4(col, 1.0);
+  // Alpha prémultiplié : le canvas est transparent, la voile se fond dans
+  // le dégradé du panneau derrière (pas de rectangle plat).
+  gl_FragColor = vec4(col * bord, bord);
 }
 `
 
@@ -128,7 +128,7 @@ export function VoileDecor({ className, force = 1 }: { className?: string; force
     // Fallback immédiat : mobile, reduced-motion, ou pas de WebGL.
     const mobile = window.matchMedia("(max-width: 1023px)").matches
     const reduit = window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    const gl = canvas.getContext("webgl", { alpha: false, antialias: true })
+    const gl = canvas.getContext("webgl", { alpha: true, premultipliedAlpha: true, antialias: true })
     if (mobile || reduit || !gl) {
       setFallback(true)
       return
@@ -202,12 +202,9 @@ export function VoileDecor({ className, force = 1 }: { className?: string; force
     const locSouris = gl.getUniformLocation(programme, "uSouris")
     const locForce = gl.getUniformLocation(programme, "uForce")
     const locCouleur = gl.getUniformLocation(programme, "uCouleur")
-    const locFond = gl.getUniformLocation(programme, "uFond")
 
     const [cr, cg, cb] = hexVersRgb(lireCouleur("--primary", "#8f5c07"))
-    const [fr, fg, fb] = hexVersRgb(lireCouleur("--background", "#f6f1e6"))
     gl.uniform3f(locCouleur, cr, cg, cb)
-    gl.uniform3f(locFond, fr, fg, fb)
     gl.uniform1f(locForce, force)
 
     let souris: [number, number] = [0.5, 0.5]
@@ -250,7 +247,7 @@ export function VoileDecor({ className, force = 1 }: { className?: string; force
       temps = (maintenant - demarre) / 1000
       gl.uniform1f(locTemps, temps)
       gl.uniform2f(locSouris, souris[0], souris[1])
-      gl.clearColor(fr, fg, fb, 1)
+      gl.clearColor(0, 0, 0, 0)
       gl.clear(gl.COLOR_BUFFER_BIT)
       gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0)
     }
