@@ -22,7 +22,7 @@ import { rafraichirSessionGlobale } from "@/lib/use-session"
  * The rescue account keeps working: leaving the identifier empty (or typing
  * « secours ») uses the historical shared password. See docs/API.md.
  */
-export function LoginForm() {
+export function LoginForm({ signupEnabled = false }: { signupEnabled?: boolean }) {
   const router = useRouter()
   const [mode, setMode] = useState<"login" | "signup">("login")
   const [identifiant, setIdentifiant] = useState("")
@@ -249,39 +249,41 @@ export function LoginForm() {
                 : "Se connecter"}
           </Button>
 
-          <p className="mt-4 text-center text-xs text-muted-foreground">
-            {mode === "login" ? (
-              <>
-                Pas encore de compte ?{" "}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode("signup")
-                    setError(null)
-                    setSuccess(null)
-                  }}
-                  className="font-medium text-foreground underline underline-offset-2"
-                >
-                  Créer un compte
+          {signupEnabled ? (
+            <p className="mt-4 text-center text-xs text-muted-foreground">
+              {mode === "login" ? (
+                <>
+                  Pas encore de compte ?{" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("signup")
+                      setError(null)
+                      setSuccess(null)
+                    }}
+                    className="font-medium text-foreground underline underline-offset-2"
+                  >
+                    Créer un compte
+                  </button>
+                </>
+              ) : (
+                <>
+                  Déjà un compte ?{" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("login")
+                      setError(null)
+                      setSuccess(null)
+                    }}
+                    className="font-medium text-foreground underline underline-offset-2"
+                  >
+                    Se connecter
                 </button>
-              </>
-            ) : (
-              <>
-                Déjà un compte ?{" "}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode("login")
-                    setError(null)
-                    setSuccess(null)
-                  }}
-                  className="font-medium text-foreground underline underline-offset-2"
-                >
-                  Se connecter
-                </button>
-              </>
-            )}
-          </p>
+                </>
+              )}
+            </p>
+          ) : null}
         </form>
         <p className="mt-5 text-center text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
           Service de la voilerie — vos données restent chez vous

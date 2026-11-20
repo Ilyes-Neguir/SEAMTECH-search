@@ -211,6 +211,9 @@ services:
       # false; see the comment there. The two are not a typo to harmonise.
       SEAMTECH_BEHIND_TLS_PROXY: ${SEAMTECH_BEHIND_TLS_PROXY:-true}
       SEAMTECH_AUTH_TOKEN: ${SEAMTECH_AUTH_TOKEN:?Set SEAMTECH_AUTH_TOKEN in the environment}
+      # Inscription publique DÉSACTIVÉE par défaut : le rôle « lecture » peut
+      # lire l'archive via l'aperçu des pièces. Passer à true pour l'activer.
+      SEAMTECH_SIGNUP_ENABLED: ${SEAMTECH_SIGNUP_ENABLED:-false}
       SEAMTECH_ROOT_PATHS: ${SEAMTECH_ROOT_PATHS:-}
       SEAMTECH_OPTIONAL_FEATURES_ENABLED: ${SEAMTECH_OPTIONAL_FEATURES_ENABLED:-true}
     depends_on:
@@ -420,6 +423,9 @@ services:
       # endpoint fails closed (503) rather than letting everyone in.
       SEAMTECH_UI_PASSWORD: ${SEAMTECH_UI_PASSWORD:?Set SEAMTECH_UI_PASSWORD in the environment}
       SEAMTECH_SESSION_SECRET: ${SEAMTECH_SESSION_SECRET:?Set SEAMTECH_SESSION_SECRET in the environment}
+      # Doit refléter le backend (web) : si false, le bouton « Créer un compte »
+      # est masqué sur /login (sinon l'utilisateur clique et reçoit un 403).
+      SEAMTECH_SIGNUP_ENABLED: ${SEAMTECH_SIGNUP_ENABLED:-false}
       SEAMTECH_SESSION_HOURS: ${SEAMTECH_SESSION_HOURS:-8}
       SEAMTECH_OPTIONAL_FEATURES_ENABLED: ${SEAMTECH_OPTIONAL_FEATURES_ENABLED:-true}
       # Marks the session cookie Secure when a TLS terminator is in front.
