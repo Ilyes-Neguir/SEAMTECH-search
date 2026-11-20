@@ -437,5 +437,10 @@ def test_en_tetes_de_securite_frontend() -> None:
 
 
 def test_frontend_refuse_le_mot_de_passe_exemple() -> None:
-    texte = (RACINE / "frontend" / "lib" / "auth.ts").read_text(encoding="utf-8")
-    assert "change-me" in texte, "le mot de passe d'exemple doit être traité comme non configuré"
+    # La liste des secrets d'exemple vit dans lib/secrets.ts (module pur,
+    # extrait de lib/auth.ts au point 7 de la revue externe) ; auth.ts
+    # l'importe et l'applique à SEAMTECH_SESSION_SECRET.
+    secrets = (RACINE / "frontend" / "lib" / "secrets.ts").read_text(encoding="utf-8")
+    assert "change-me" in secrets, "le mot de passe d'exemple doit être traité comme non configuré"
+    auth = (RACINE / "frontend" / "lib" / "auth.ts").read_text(encoding="utf-8")
+    assert "secretInacceptable" in auth, "auth.ts doit appliquer le refus des secrets d'exemple"
