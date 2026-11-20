@@ -21,6 +21,7 @@ Sans session valide : 401.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Annotated, Any
 
 from fastapi import Header, HTTPException
@@ -302,11 +303,19 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
     ) -> dict[str, Any]:
         """Inscription publique : crée un compte avec privilèges minimum.
 
+        DÉSACTIVÉE PAR DÉFAUT (SEAMTECH_SIGNUP_ENABLED=true pour l'activer).
+        Le rôle ``lecture`` peut lire l'archive via l'aperçu des pièces :
+        ouvrir l'inscription expose les documents clients à quiconque.
         Aucune session requise (seul le jeton de service est vérifié).
         Le rôle est TOUJOURS ``lecture`` (ROLE_DEFAUT) — jamais admin.
         Validation : identifiant non vide et unique, mot de passe ≥ 8 caractères.
         """
         verifier_auth(config, token)
+        if os.environ.get("SEAMTECH_SIGNUP_ENABLED", "false").lower() != "true":
+            raise HTTPException(
+                status_code=403,
+                detail="Création de compte désactivée : demandez un compte à l'administrateur.",
+            )
         _exiger_postgres(index)
         identifiant = str(corps.get("identifiant") or "").strip()
         mot_de_passe = str(corps.get("mot_de_passe") or "")
@@ -327,6 +336,7 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
             doit_changer_mot_de_passe=False,
         )
         LOGGER.info("Inscription publique : compte créé (rôle %s).", resultat.get("role"))
+        _auditer_compte("inscription", resultat, identifiant, {"role": resultat["role"]})
         return {"ok": True, "identifiant": resultat["identifiant"], "role": resultat["role"]}
 
     # -----------------------------------------------------------------------

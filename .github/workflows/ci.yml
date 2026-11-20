@@ -2939,6 +2939,7 @@ jobs:
               "SEAMTECH_API_URL": "http://127.0.0.1:8123",
               "SEAMTECH_UI_PASSWORD": os.environ["SEAMTECH_UI_PASSWORD"],
               "SEAMTECH_SESSION_SECRET": os.environ["SEAMTECH_SESSION_SECRET"],
+              "SEAMTECH_SIGNUP_ENABLED": "true",
               "NEXT_TELEMETRY_DISABLED": "1",
           }
           ecrire_fichier_prive(Path("/tmp/env-hors-ligne.sh"), "".join(

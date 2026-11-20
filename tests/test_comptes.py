@@ -466,14 +466,31 @@ def test_api_mauvais_mot_de_passe_et_jeton_de_service(
 # ---------------------------------------------------------------------------
 # Inscription publique (création de compte) — Phase 3/5.
 #
+# DÉSACTIVÉE PAR DÉFAUT (SEAMTECH_SIGNUP_ENABLED=true pour l'activer) : le
+# rôle « lecture » peut lire l'archive via l'aperçu des pièces.
 # Le rôle est TOUJOURS « lecture » (jamais admin, jamais configurable par le
-# client). Validation : identifiant non vide, mot de passe ≥ 8 caractères.
+# client). Validation : identifiant non vide et unique, mot de passe ≥ 8 caractères.
 # ---------------------------------------------------------------------------
 
 
-def test_api_inscription_cree_compte_lecture(
-    base_comptes: dict[str, Any], client_comptes: TestClient
+def test_api_inscription_desactivee_par_defaut(
+    base_comptes: dict[str, Any], client_comptes: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Sans SEAMTECH_SIGNUP_ENABLED=true, l'inscription est refusée (403)."""
+    monkeypatch.delenv("SEAMTECH_SIGNUP_ENABLED", raising=False)
+    reponse = client_comptes.post(
+        "/auth/signup",
+        json={"identifiant": "nouveau", "mot_de_passe": "Secret!2026"},
+        headers={"X-SEAMTECH-TOKEN": JETON_SERVICE},
+    )
+    assert reponse.status_code == 403, reponse.text
+    assert "désactivée" in reponse.json()["detail"]
+
+
+def test_api_inscription_cree_compte_lecture(
+    base_comptes: dict[str, Any], client_comptes: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SEAMTECH_SIGNUP_ENABLED", "true")
     inscription = client_comptes.post(
         "/auth/signup",
         json={"identifiant": "nouveau", "nom": "Nouveau", "mot_de_passe": "Secret!2026"},
@@ -497,9 +514,10 @@ def test_api_inscription_cree_compte_lecture(
 
 
 def test_api_inscription_role_jamais_admin(
-    base_comptes: dict[str, Any], client_comptes: TestClient
+    base_comptes: dict[str, Any], client_comptes: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Même si le client demande le rôle admin, il reçoit lecture."""
+    monkeypatch.setenv("SEAMTECH_SIGNUP_ENABLED", "true")
     inscription = client_comptes.post(
         "/auth/signup",
         json={
@@ -514,8 +532,9 @@ def test_api_inscription_role_jamais_admin(
 
 
 def test_api_inscription_refuse_mot_de_passe_court(
-    base_comptes: dict[str, Any], client_comptes: TestClient
+    base_comptes: dict[str, Any], client_comptes: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("SEAMTECH_SIGNUP_ENABLED", "true")
     reponse = client_comptes.post(
         "/auth/signup",
         json={"identifiant": "court", "mot_de_passe": "court"},
@@ -526,8 +545,9 @@ def test_api_inscription_refuse_mot_de_passe_court(
 
 
 def test_api_inscription_refuse_identifiant_vide(
-    base_comptes: dict[str, Any], client_comptes: TestClient
+    base_comptes: dict[str, Any], client_comptes: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("SEAMTECH_SIGNUP_ENABLED", "true")
     reponse = client_comptes.post(
         "/auth/signup",
         json={"identifiant": "   ", "mot_de_passe": "Secret!2026"},
@@ -538,8 +558,9 @@ def test_api_inscription_refuse_identifiant_vide(
 
 
 def test_api_inscription_refuse_doublon(
-    base_comptes: dict[str, Any], client_comptes: TestClient
+    base_comptes: dict[str, Any], client_comptes: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("SEAMTECH_SIGNUP_ENABLED", "true")
     _creer(base_comptes, "imrane", "Secret!2026")
     reponse = client_comptes.post(
         "/auth/signup",
