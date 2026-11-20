@@ -10,7 +10,7 @@ Mission : refonte visuelle + création de compte, contrat de gel strict
 | 2 — Fondations | Typographie Barlow Condensed / IBM Plex Sans / IBM Plex Mono via `@fontsource` (local, aucun CDN) | `335fec7`, `b2215ed` |
 | 3 — Création de compte | `POST /auth/signup` (rôle forcé `lecture`, jamais admin), proxy Next, bascule login/signup avec confirmation | `af0d625` |
 | 4 — 3D décorative | Voile WebGL procédurale (0 dépendance, 12,5 ko gzip), fallback SVG, intégrée au login ; composant `EtatVide` | `9474cbe`, `0a58e18` |
-| 5 — QA + tests | 6 tests backend signup, 4 tests e2e signup, ce rapport | (ce commit) |
+| 5 — QA + tests | 6 tests backend signup, 4 tests e2e signup, garde-fou CI 34→38, ce rapport | `7ba5d96`, `2fdc751` |
 
 Fichiers touchés (refonte) : `frontend/app/globals.css`, `frontend/package.json`,
 `frontend/pnpm-lock.yaml`, `frontend/components/login-form.tsx`,
@@ -27,7 +27,7 @@ Fichiers touchés (refonte) : `frontend/app/globals.css`, `frontend/package.json
 | Tests unitaires | ✅ 33/33 | `node --test lib/*.test.ts` local ; CI step 8 success |
 | Tests backend | ✅ verts | CI `backend (3.11/3.12/3.13)` success sur `0a58e18` |
 | Tests e2e | ✅ verts | CI `e2e`, `hors-ligne-reel`, `qualification`, `accessibilite` success |
-| CI globale | ✅ 22 success / 1 skipped / 0 failure | `gh api …/commits/0a58e18/check-runs` |
+| CI globale | ✅ 21 success / 1 skipped / 1 failure (infra) | `gh api …/commits/2fdc751/check-runs` — seul `windows-postgres` échoue (installation PostgreSQL Windows, step 7, avant les tests ; flaky connu) |
 | `impeccable detect` | ✅ 0 anti-pattern | 137 fichiers scannés, 0 finding ; 1 advisory pré-existant (`couture`, signature DESIGN.md) |
 | WCAG AA | ✅ contraste ≥ 4,5:1 | `contraste.test.ts` (source, thèmes jour+nuit) ; axe-core e2e vert en CI |
 | Responsive 375/768/1024/1440 | ⚠️ breakpoints présents, captures non faites | Breakpoints Tailwind `sm/md/lg/xl` en place ; pas de Chromium en sandbox pour captures avant/après |
