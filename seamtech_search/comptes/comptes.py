@@ -41,6 +41,11 @@ from .securite import (
 
 LOGGER = logging.getLogger("seamtech_search.comptes")
 
+# Hash factice pour égaliser le temps de réponse quand le compte n'existe pas
+# (anti-énumération par timing : un compte inconnu doit coûter un scrypt comme
+# un mot de passe faux). Calculé une fois au chargement du module.
+_HASH_FACTICE = empreinte_mot_de_passe("factice-pour-egaliser-le-temps")
+
 if TYPE_CHECKING:  # pragma: no cover - typage seul, aucun cycle d'import
     from ..sessions_redis import RegistreSessionsRedis
 
@@ -429,7 +434,11 @@ def verifier_identifiants(
                 (identifiant,),
             )
             ligne = cursor.fetchone()
-            if ligne is None or not bool(ligne[3]) or not verifier_mot_de_passe(mot_de_passe, ligne[4]):
+            # Toujours exécuter scrypt, même si le compte n'existe pas
+            # (anti-énumération par timing).
+            empreinte = ligne[4] if ligne else _HASH_FACTICE
+            ok = verifier_mot_de_passe(mot_de_passe, empreinte)
+            if ligne is None or not bool(ligne[3]) or not ok:
                 _noter_tentative(index, identifiant, adresse)
                 LOGGER.warning("Connexion refusée (échec journalisé dans audit_log).")
                 raise HTTPException(status_code=401, detail="Identifiant ou mot de passe incorrect.")
