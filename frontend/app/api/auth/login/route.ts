@@ -13,6 +13,8 @@ import {
   createSessionToken,
   isAuthConfigured,
   lockoutRemaining,
+  lockoutSecoursGlobal,
+  noteEchecSecoursGlobal,
   noteFailedAttempt,
   passwordMatches,
   shouldMarkCookieSecure,
@@ -120,8 +122,20 @@ export async function POST(req: NextRequest) {
         { status: 503, headers: { "Cache-Control": "no-store" } },
       )
     }
+    // Plafond global du secours (toutes IP) : un succès ne l'efface pas.
+    const verrouGlobal = lockoutSecoursGlobal()
+    if (verrouGlobal > 0) {
+      return NextResponse.json(
+        { detail: `Trop de tentatives échouées sur le compte de secours. Réessayez dans ${Math.ceil(verrouGlobal / 1000)} s.` },
+        {
+          status: 429,
+          headers: { "Cache-Control": "no-store", "Retry-After": String(Math.ceil(verrouGlobal / 1000)) },
+        },
+      )
+    }
     if (!passwordMatches(motDePasse, uiPassword())) {
       const restantes = noteFailedAttempt(cle)
+      noteEchecSecoursGlobal()
       return NextResponse.json(
         { detail: restantes > 0 ? `Mot de passe incorrect. ${restantes} tentative(s) restante(s).` : "Mot de passe incorrect." },
         { status: 401, headers: { "Cache-Control": "no-store" } },

@@ -21,6 +21,15 @@ const FAILURE_WINDOW_MS = 5 * 60 * 1000
 const LOCKOUT_MS = 5 * 60 * 1000
 const failures = new Map<string, { count: number; first: number; lockedUntil: number }>()
 
+// Plafond GLOBAL du secours (toutes IP confondues) : un attaquant distribué
+// (chaque IP sous le seuil par IP) est arrêté par ce second compteur.
+// Un succès ne l'efface PAS (sinon un compte valide permettrait de le
+// contourner, comme pour la clé par IP avant le point 1).
+const SECOURS_GLOBAL_MAX = 30
+const SECOURS_GLOBAL_WINDOW_MS = 15 * 60 * 1000
+const SECOURS_GLOBAL_LOCK_MS = 15 * 60 * 1000
+let secoursGlobal = { count: 0, first: 0, lockedUntil: 0 }
+
 function attemptKey(identifier: string): string {
   return identifier || "unknown"
 }
@@ -65,7 +74,28 @@ export function clearFailedAttempts(identifier: string): void {
   failures.delete(attemptKey(identifier))
 }
 
+/** Remaining global secours lockout in ms, or 0 when not locked out. */
+export function lockoutSecoursGlobal(now: number = Date.now()): number {
+  if (secoursGlobal.lockedUntil > now) return secoursGlobal.lockedUntil - now
+  return 0
+}
+
+export function noteEchecSecoursGlobal(now: number = Date.now()): number {
+  if (secoursGlobal.count === 0 || now - secoursGlobal.first > SECOURS_GLOBAL_WINDOW_MS) {
+    secoursGlobal = { count: 1, first: now, lockedUntil: 0 }
+    return SECOURS_GLOBAL_MAX - 1
+  }
+  secoursGlobal.count += 1
+  let remaining = SECOURS_GLOBAL_MAX - secoursGlobal.count
+  if (secoursGlobal.count >= SECOURS_GLOBAL_MAX) {
+    secoursGlobal.lockedUntil = now + SECOURS_GLOBAL_LOCK_MS
+    remaining = 0
+  }
+  return Math.max(0, remaining)
+}
+
 /** Test/maintenance hook: drop all throttling state. */
 export function resetFailedAttempts(): void {
   failures.clear()
+  secoursGlobal = { count: 0, first: 0, lockedUntil: 0 }
 }

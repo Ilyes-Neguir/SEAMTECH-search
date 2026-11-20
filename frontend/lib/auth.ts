@@ -38,9 +38,12 @@ import {
   cleTentative,
   clearFailedAttempts,
   lockoutRemaining,
+  lockoutSecoursGlobal,
+  noteEchecSecoursGlobal,
   noteFailedAttempt,
   resetFailedAttempts,
 } from "./throttling.ts"
+import { isAuthConfigured, secretInacceptable, uiPassword } from "./secrets.ts"
 
 export { CSRF_COOKIE, SESSION_COOKIE }
 export {
@@ -48,9 +51,12 @@ export {
   cleTentative,
   clearFailedAttempts,
   lockoutRemaining,
+  lockoutSecoursGlobal,
+  noteEchecSecoursGlobal,
   noteFailedAttempt,
   resetFailedAttempts,
 }
+export { isAuthConfigured, uiPassword }
 
 const TOKEN_VERSION = "v2"
 const DEFAULT_SESSION_HOURS = 8
@@ -81,54 +87,6 @@ function stableCompare(a: string, b: string): boolean {
   const right = Buffer.from(b)
   if (left.length !== right.length) return false
   return timingSafeEqual(left, right)
-}
-
-/**
- * Lot PROD — example secrets are "not configured". `.env.example` publishes
- * placeholder values (« change-me »); accepting them would sign sessions and
- * guard the rescue account with public knowledge. Mirrors the backend
- * `exiger_secrets_production` (config.py): placeholder or shorter than 8
- * characters → unconfigured, and the login page keeps failing closed with
- * its explicit "not configured" screen instead of silently running open.
- */
-const SECRETS_EXEMPLES = new Set([
-  "change-me",
-  "changeme",
-  "change_me",
-  "changez-moi",
-  "exemple",
-  "example",
-  "motdepasse",
-  "mot-de-passe",
-  "password",
-  "votre-secret",
-  "votre-mot-de-passe",
-])
-
-function secretInacceptable(valeur: string): boolean {
-  const nettoyee = valeur.trim()
-  return SECRETS_EXEMPLES.has(nettoyee.toLowerCase()) || nettoyee.length < 8
-}
-
-/**
- * The shared rescue password. Empty string means "not configured", which makes
- * the rescue path fail — the nominative accounts (backend side) remain the way
- * in, and with no password at all nobody authenticates.
- */
-export function uiPassword(): string {
-  const brut = process.env.SEAMTECH_UI_PASSWORD?.trim() ?? ""
-  if (brut && secretInacceptable(brut)) {
-    console.error(
-      "[auth] SEAMTECH_UI_PASSWORD is an example/too-short value: treated as NOT configured. " +
-        "Generate a dedicated secret (see .env.example).",
-    )
-    return ""
-  }
-  return brut
-}
-
-export function isAuthConfigured(): boolean {
-  return uiPassword().length > 0
 }
 
 /**

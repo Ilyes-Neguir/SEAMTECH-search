@@ -6,6 +6,8 @@ import {
   cleTentative,
   clearFailedAttempts,
   lockoutRemaining,
+  lockoutSecoursGlobal,
+  noteEchecSecoursGlobal,
   noteFailedAttempt,
   resetFailedAttempts,
 } from "./throttling.ts"
@@ -42,4 +44,17 @@ test("clearFailedAttempts sur la clé secours déverrouille", () => {
   assert.ok(lockoutRemaining(cle) > 0)
   clearFailedAttempts(cle)
   assert.equal(lockoutRemaining(cle), 0)
+})
+
+test("plafond global du secours : 30 échecs verrouillent toutes les IP", () => {
+  for (let i = 0; i < 30; i++) noteEchecSecoursGlobal()
+  assert.ok(lockoutSecoursGlobal() > 0, "le plafond global doit verrouiller")
+})
+
+test("le plafond global n'est pas effacé par clearFailedAttempts (par IP)", () => {
+  for (let i = 0; i < 30; i++) noteEchecSecoursGlobal()
+  assert.ok(lockoutSecoursGlobal() > 0)
+  // Un succès sur une IP (clearFailedAttempts) ne déverrouille pas le global.
+  clearFailedAttempts(cleTentative(IDENTIFIANT_SECOURS, "1.2.3.4"))
+  assert.ok(lockoutSecoursGlobal() > 0)
 })

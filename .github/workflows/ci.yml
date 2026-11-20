@@ -880,7 +880,7 @@ jobs:
       MINIO_ROOT_PASSWORD: minioadmin123
       REDIS_PASSWORD: redis_test_password
       SEAMTECH_AUTH_TOKEN: test-token-123
-      SEAMTECH_UI_PASSWORD: ci-ui-password
+      SEAMTECH_UI_PASSWORD: ci-ui-password-2026
       SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
       SEAMTECH_S3_BUCKET: seamtech-documents
       SEAMTECH_BACKUP_BUCKET: seamtech-backups
@@ -932,7 +932,7 @@ jobs:
           # Required by docker-compose.yml since the UI sign-in gate (audit
           # issue #5, Option B): ${VAR:?...} makes `docker compose config` fail
           # without them, even when only the infra services are started.
-          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_UI_PASSWORD: ci-ui-password-2026
           SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
         run: |
           # Validate interpolation/schema up front so a config error fails
@@ -956,7 +956,7 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
           SEAMTECH_AUTH_TOKEN: test-token-123
-          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_UI_PASSWORD: ci-ui-password-2026
           SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
         run: |
           python - << 'PY'
@@ -1033,7 +1033,7 @@ jobs:
           # Required by docker-compose.yml since the UI sign-in gate (audit
           # issue #5, Option B): ${VAR:?...} makes `docker compose config` fail
           # without them, even when only the infra services are started.
-          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_UI_PASSWORD: ci-ui-password-2026
           SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
           SEAMTECH_S3_BUCKET: seamtech-documents
         run: |
@@ -1118,7 +1118,7 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
           SEAMTECH_AUTH_TOKEN: test-token-123
-          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_UI_PASSWORD: ci-ui-password-2026
           SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
         run: |
           set -euo pipefail
@@ -1165,7 +1165,7 @@ jobs:
           # Required by docker-compose.yml since the UI sign-in gate (audit
           # issue #5, Option B): ${VAR:?...} makes `docker compose config` fail
           # without them, even when only the infra services are started.
-          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_UI_PASSWORD: ci-ui-password-2026
           SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
           SEAMTECH_S3_BUCKET: seamtech-documents
           # Compte nominatif de la preuve : identités de TEST, jamais de
@@ -1205,7 +1205,7 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
           SEAMTECH_AUTH_TOKEN: test-token-123
-          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_UI_PASSWORD: ci-ui-password-2026
           SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
           SEAMTECH_S3_BUCKET: seamtech-documents
           SEAMTECH_PREUVE_UTILISATEUR: approbateur-preuve
@@ -1250,7 +1250,7 @@ jobs:
           MINIO_ROOT_PASSWORD: minioadmin123
           REDIS_PASSWORD: redis_test_password
           SEAMTECH_AUTH_TOKEN: test-token-123
-          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_UI_PASSWORD: ci-ui-password-2026
           SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
           SEAMTECH_S3_BUCKET: seamtech-documents
         run: |
@@ -1305,7 +1305,7 @@ jobs:
           # Required by docker-compose.yml since the UI sign-in gate (audit
           # issue #5, Option B): ${VAR:?...} makes `docker compose config` fail
           # without them, even when only the infra services are started.
-          SEAMTECH_UI_PASSWORD: ci-ui-password
+          SEAMTECH_UI_PASSWORD: ci-ui-password-2026
           SEAMTECH_SESSION_SECRET: ci-session-secret-not-for-production
           SEAMTECH_S3_BUCKET: seamtech-documents
           # CI guarantees the infra is healthy above: the test must not swallow
