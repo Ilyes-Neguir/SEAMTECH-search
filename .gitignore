@@ -32,3 +32,4 @@ docs/recette/junit-*.xml
 .claude/
 .agents/
 agent/
+skills-lock.json
