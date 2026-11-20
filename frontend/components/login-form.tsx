@@ -202,7 +202,7 @@ export function LoginForm({ signupEnabled = false }: { signupEnabled?: boolean }
             required
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            placeholder={mode === "signup" ? "8 caractères minimum" : "Votre mot de passe"}
+            placeholder={mode === "signup" ? "12 caractères minimum" : "Votre mot de passe"}
             className="mt-1"
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? "login-error" : undefined}

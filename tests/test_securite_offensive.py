@@ -117,8 +117,8 @@ def test_role_usurpe_par_entete_ne_donne_pas_l_approbation(tmp_path: Path) -> No
     index.initialize()
     index.run_migrations()
     try:
-        creer_utilisateur(index, "off-lecteur", "Lecteur Offensif", "Passe!12345", "lecture")
-        utilisateur = verifier_identifiants(index, "off-lecteur", "Passe!12345")
+        creer_utilisateur(index, "off-lecteur", "Lecteur Offensif", "Passe!123456", "lecture")
+        utilisateur = verifier_identifiants(index, "off-lecteur", "Passe!123456")
         session = ouvrir_session(index, utilisateur["id_utilisateur"])
         config = AppConfig(
             root_paths=[racine],
@@ -194,7 +194,7 @@ def test_creation_de_compte_par_entete_seul_est_refusee(tmp_path: Path) -> None:
         client = TestClient(create_app(config))
         reponse = client.post(
             "/auth/utilisateurs",
-            json={"identifiant": "intrus", "nom": "Intrus", "mot_de_passe": "Passe!12345", "role": "admin"},
+            json={"identifiant": "intrus", "nom": "Intrus", "mot_de_passe": "Passe!123456", "role": "admin"},
             headers={"X-SEAMTECH-TOKEN": "jeton-service-offensif", "X-SEAMTECH-ROLE": "admin",
                      "X-SEAMTECH-UTILISATEUR": "intrus"},
         )

@@ -439,7 +439,7 @@ test.describe("Comptes nominatifs (rôles canoniques)", () => {
         failOnStatusCode: false,
       })
       expect(reponse.status()).toBe(422)
-      expect((await reponse.json()).detail).toMatch(/8 caractères/i)
+      expect((await reponse.json()).detail).toMatch(/12 caractères/i)
     } finally {
       await context.dispose()
     }

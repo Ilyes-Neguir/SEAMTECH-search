@@ -184,7 +184,7 @@ def monde_lot3b(base_recherche: dict[str, Any], tmp_path: Path) -> dict[str, Any
             index,
             identifiant,
             f"Compte {identifiant}",
-            f"MotDePasse-{identifiant}-2026",
+            "MotDePasse-atelier-2026",
             role=role,
             doit_changer_mot_de_passe=False,
         )

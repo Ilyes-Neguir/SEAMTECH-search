@@ -129,7 +129,7 @@ if (-not (Test-Path $EnvFile)) {
     $lignes += "SEAMTECH_S3_BUCKET=seamtech-documents"
     $lignes += "SEAMTECH_BACKUP_BUCKET=seamtech-backups"
     $lignes += "SEAMTECH_ROOT_PATHS=${SourcesConteneur}:/app/data/recette-lot:/app/data:/app/sample_data"
-    $lignes += "RECETTE_MOT_DE_PASSE=seamtech-recette-$([guid]::NewGuid().ToString('N'))"
+    $lignes += "RECETTE_MOT_DE_PASSE=seamtech-compte-$([guid]::NewGuid().ToString('N'))"
     Set-Content -Path $EnvFile -Value $lignes -Encoding ascii
     $Creation = "créé avec 11 secrets aléatoires"
 } else {
@@ -139,7 +139,7 @@ if (-not (Test-Path $EnvFile)) {
         Add-Content -Path $EnvFile -Value "SEAMTECH_ROOT_PATHS=${SourcesConteneur}:/app/data/recette-lot:/app/data:/app/sample_data" -Encoding ascii
     }
     if (-not ($contenu -match '^RECETTE_MOT_DE_PASSE=')) {
-        Add-Content -Path $EnvFile -Value "RECETTE_MOT_DE_PASSE=seamtech-recette-$([guid]::NewGuid().ToString('N'))" -Encoding ascii
+        Add-Content -Path $EnvFile -Value "RECETTE_MOT_DE_PASSE=seamtech-compte-$([guid]::NewGuid().ToString('N'))" -Encoding ascii
     }
     # Identités de stockage : un .env antérieur au correctif n'en a pas.
     foreach ($nom in @("SEAMTECH_S3_ACCESS_KEY", "SEAMTECH_S3_SECRET_KEY", "SEAMTECH_BACKUP_ACCESS_KEY", "SEAMTECH_BACKUP_SECRET_KEY")) {

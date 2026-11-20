@@ -179,7 +179,7 @@ def _compte(index: Any, identifiant: str, role: str = "approbateur") -> int:  # 
         index,
         identifiant,
         f"Compte {identifiant}",
-        f"MotDePasse-{identifiant}-2026",
+        "MotDePasse-atelier-2026",
         role=role,
         doit_changer_mot_de_passe=False,
     )

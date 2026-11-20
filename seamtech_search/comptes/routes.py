@@ -309,7 +309,7 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         ouvrir l'inscription expose les documents clients à quiconque.
         Aucune session requise (seul le jeton de service est vérifié).
         Le rôle est TOUJOURS ``lecture`` (ROLE_DEFAUT) — jamais admin.
-        Validation : identifiant non vide et unique, mot de passe ≥ 8 caractères.
+        Validation : identifiant non vide et unique, mot de passe ≥ 12 caractères.
         """
         verifier_auth(config, token)
         if os.environ.get("SEAMTECH_SIGNUP_ENABLED", "false").lower() != "true":

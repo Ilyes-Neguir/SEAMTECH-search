@@ -132,7 +132,7 @@ def monde_matrice(base_recherche: dict[str, Any], tmp_path: Path, request: pytes
     }
     mots_de_passe: dict[str, str] = {}
     for role in ("admin", "lecture", "utilisateur", "approbateur"):
-        mot_de_passe = f"MotDePasse-matrice-{role}-2026"
+        mot_de_passe = "MotDePasse-atelier-2026"
         creer_utilisateur(
             index,
             f"matrice-{role}",
