@@ -347,6 +347,62 @@ def test_cinq_echecs_verrouillent_le_compte(base_comptes: dict[str, Any]) -> Non
     assert "inconnu" in inconnu.value.detail or "incorrect" in inconnu.value.detail
 
 
+def test_verrou_par_identifiant_et_ip(base_comptes: dict[str, Any]) -> None:
+    """5 échecs depuis une IP verrouillent cette IP, pas une autre.
+
+    Sans la dimension IP, un attaquant verrouillait le compte d'un tiers en
+    échouant 5 fois avec son identifiant (verrouillage par identifiant seul).
+    """
+    base = base_comptes
+    _creer(base, "imrane", "Secret!2026")
+
+    for _ in range(5):
+        with pytest.raises(HTTPException) as echec:
+            verifier_identifiants(base["index"], "imrane", "mauvais", adresse="198.51.100.1")
+        assert echec.value.status_code == 401
+
+    assert verrou_actif(base["index"], "imrane", "198.51.100.1") > 0
+    assert verrou_actif(base["index"], "imrane", "198.51.100.2") == 0
+
+    # Depuis l'IP verrouillée, même le bon mot de passe est refusé (429).
+    # (Avant tout succès : une connexion réussie remet les échecs à zéro,
+    # sémantique historique « après la dernière réussite ».)
+    with pytest.raises(HTTPException) as verrou:
+        verifier_identifiants(base["index"], "imrane", "Secret!2026", adresse="198.51.100.1")
+    assert verrou.value.status_code == 429
+
+    # Depuis une autre IP, le bon mot de passe passe encore.
+    assert verifier_identifiants(base["index"], "imrane", "Secret!2026", adresse="198.51.100.2")["identifiant"] == "imrane"
+
+
+def test_plafond_par_identifiant_toutes_ip(base_comptes: dict[str, Any]) -> None:
+    """30 échecs répartis sur des IP différentes verrouillent l'identifiant.
+
+    Chaque IP reste sous le seuil par IP (5), mais le plafond par identifiant
+    (30 échecs / 15 min, toutes IP) arrête l'attaque distribuée.
+    """
+    from seamtech_search.audit import record_audit_event
+
+    base = base_comptes
+    _creer(base, "imrane", "Secret!2026")
+
+    for i in range(30):
+        record_audit_event(
+            base["index"],
+            action="connexion_refusee",
+            actor="imrane",
+            resource="/auth/connexion",
+            status="401",
+            details={"adresse": f"198.51.100.{i + 1}"},
+        )
+
+    # Une IP fraîche (aucun échec direct) est verrouillée par le plafond.
+    assert verrou_actif(base["index"], "imrane", "203.0.113.9") > 0
+    with pytest.raises(HTTPException) as verrou:
+        verifier_identifiants(base["index"], "imrane", "Secret!2026", adresse="203.0.113.9")
+    assert verrou.value.status_code == 429
+
+
 def test_desactivation_revoque_les_sessions_et_bloque_la_connexion(base_comptes: dict[str, Any]) -> None:
     base = base_comptes
     _creer(base, "imrane", "Secret!2026")
