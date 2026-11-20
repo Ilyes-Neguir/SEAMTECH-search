@@ -117,7 +117,7 @@ export function LoginForm() {
           </p>
           <div className="couture my-6 w-56" />
           <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
-            Dix mille plans, cotes et gabarits de la voilerie — cousus, classés,
+            Plans, cotes et gabarits de la voilerie — cousus, classés,
             retrouvés en un souffle. Montez à bord : le quart commence.
           </p>
         </div>
@@ -284,7 +284,7 @@ export function LoginForm() {
           </p>
         </form>
         <p className="mt-5 text-center text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-          Service local de la voilerie — aucun envoi externe
+          Service de la voilerie — vos données restent chez vous
         </p>
       </div>
       </div>

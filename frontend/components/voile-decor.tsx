@@ -250,6 +250,8 @@ export function VoileDecor({ className, force = 1 }: { className?: string; force
       temps = (maintenant - demarre) / 1000
       gl.uniform1f(locTemps, temps)
       gl.uniform2f(locSouris, souris[0], souris[1])
+      gl.clearColor(fr, fg, fb, 1)
+      gl.clear(gl.COLOR_BUFFER_BIT)
       gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0)
     }
     raf = requestAnimationFrame(boucle)

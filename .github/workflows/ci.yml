@@ -1837,24 +1837,24 @@ jobs:
           flaky = stats.get("flaky", 0)
           sautes = stats.get("skipped", 0)
           inattendus = stats.get("unexpected", 0)
-          # 38 tests : 23 sondes anonymes (dont les 8 routes Lot 1
+          # Au moins 38 tests : 23 sondes anonymes (dont les 8 routes Lot 1
           # d'approbation et de notification), 7 parcours de session de
           # secours/santé, et 8 parcours de comptes nominatifs (dont 4
-          # d'inscription publique, Phase 3/5). Le compte reste EXACT et
-          # strict : premier essai uniquement, aucun saut en CI.
-          if sautes or flaky or inattendus or passes != 38:
+          # d'inscription publique, Phase 3/5). Le compte est un PLANCHER :
+          # ajouter un test ne doit jamais faire échouer la CI.
+          if sautes or flaky or inattendus or passes < 38:
               # Message aussi en annotation : c'est le seul canal lisible en CI.
               print(
-                  f"::error title=e2e-auth-count::attendu 38 tests passés au premier essai, "
+                  f"::error title=e2e-auth-count::attendu au moins 38 tests passés au premier essai, "
                   f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
                   f"{sautes} sautés, {inattendus} en échec"
               )
               raise SystemExit(
-                  f"GARDE-FOU e2e auth : attendu 38 tests passés au premier essai, "
+                  f"GARDE-FOU e2e auth : attendu au moins 38 tests passés au premier essai, "
                   f"0 flaky, 0 sautés — mesuré {passes} passés, {flaky} flaky, "
                   f"{sautes} sautés, {inattendus} en échec."
               )
-          print("::notice title=e2e-auth-nominatif::38 tests verts au premier essai (dont 8 sur les comptes nominatifs)")
+          print(f"::notice title=e2e-auth-nominatif::{passes} tests verts au premier essai (dont 8 sur les comptes nominatifs)")
           PY
 
       # Lot 1 — parcours navigateur complets des quatre rôles : demande de
