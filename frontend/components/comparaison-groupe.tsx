@@ -72,13 +72,12 @@ export function ComparaisonGroupe({
     setSelection(idsInitiaux)
   }, [idsInitiaux])
 
-  // La sélection peut contenir un identifiant qui n'est plus dans la liste
-  // (extraction supprimée entre deux chargements) : on ne compare que ce qui
-  // existe encore, plutôt que d'échouer sur un fantôme.
-  const idsActifs = useMemo(
-    () => selection.filter((id) => extractions.some((e) => e.id_extraction === id)),
-    [selection, extractions],
-  )
+  // La sélection vient de l'URL (/comparaison?ids=…) : on la compare telle
+  // quelle. La liste `extractions` (chargée avec une limite) ne sert qu'aux
+  // libellés du sélecteur de référence — la filtrer par elle jetait les
+  // fiches hors des 100 premières et affichait « 0 fiche » (bug 2026-11-20).
+  // Une extraction supprimée est signalée par le backend (404), pas ici.
+  const idsActifs = useMemo(() => selection, [selection])
   const cleSelection = idsActifs.join(",")
   const referenceEffective = reference !== null && idsActifs.includes(reference) ? reference : (idsActifs[0] ?? null)
 
