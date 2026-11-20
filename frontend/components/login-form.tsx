@@ -249,13 +249,6 @@ export function LoginForm() {
                 : "Se connecter"}
           </Button>
 
-          {mode === "login" ? (
-            <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-              Compte de secours : laissez l'identifiant vide et saisissez le mot de passe partagé de
-              l'atelier. Ses actions sont attribuées à « secours » et sa session n'est pas révocable.
-            </p>
-          ) : null}
-
           <p className="mt-4 text-center text-xs text-muted-foreground">
             {mode === "login" ? (
               <>

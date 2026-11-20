@@ -76,7 +76,11 @@ export async function POST(req: NextRequest) {
   const identifiant = identifiantBrut.trim() || IDENTIFIANT_SECOURS
   const motDePasse = motDePasseBrut
 
-  const identifiantClient = clientIdentifier(req.headers.get("x-forwarded-for"), req.headers.get("x-real-ip"))
+  const identifiantClient = clientIdentifier(
+    req.headers.get("x-forwarded-for"),
+    req.headers.get("x-real-ip"),
+    req.headers.get("cf-connecting-ip"),
+  )
   const verrou = lockoutRemaining(identifiantClient)
   if (verrou > 0) {
     return NextResponse.json(

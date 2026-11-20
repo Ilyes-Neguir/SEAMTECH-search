@@ -343,10 +343,24 @@ export function passwordMatches(candidate: string, expected: string): boolean {
   return timingSafeEqual(left, right)
 }
 
-/** Best-effort client identifier for throttling (behind a proxy or not). */
-export function clientIdentifier(forwardedFor: string | null, fallbackIp: string | null): string {
-  const first = forwardedFor?.split(",")[0]?.trim()
-  return first || fallbackIp || "unknown"
+/**
+ * Best-effort client identifier for throttling (behind a proxy or not).
+ *
+ * Behind Cloudflare, `cf-connecting-ip` is set by the edge to the real
+ * client IP and cannot be spoofed. X-Forwarded-For is client-controlled
+ * at the START (proxies append at the END), so we take the LAST element
+ * — the one added by the nearest trusted proxy.
+ */
+export function clientIdentifier(
+  forwardedFor: string | null,
+  fallbackIp: string | null,
+  cfConnectingIp?: string | null,
+): string {
+  const cf = cfConnectingIp?.trim()
+  if (cf) return cf
+  const parts = forwardedFor?.split(",").map((p) => p.trim()).filter(Boolean)
+  const last = parts?.[parts.length - 1]
+  return last || fallbackIp || "unknown"
 }
 
 export function cookieMaxAgeSeconds(lifetimeMs: number = sessionLifetimeMs()): number {
