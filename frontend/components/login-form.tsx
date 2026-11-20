@@ -286,7 +286,7 @@ export function LoginForm({ signupEnabled = false }: { signupEnabled?: boolean }
           ) : null}
         </form>
         <p className="mt-5 text-center text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-          Service de la voilerie — vos données restent chez vous
+          Service interne de la voilerie
         </p>
       </div>
       </div>
