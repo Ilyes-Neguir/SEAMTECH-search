@@ -109,6 +109,18 @@ def _maintenant() -> datetime:
 # ---------------------------------------------------------------------------
 
 
+def valider_mot_de_passe(mot_de_passe: str, identifiant: str = "") -> None:
+    """Politique de mot de passe : 8 à 256 caractères, ne contient pas l'identifiant."""
+    if not mot_de_passe:
+        raise HTTPException(status_code=422, detail="Mot de passe obligatoire.")
+    if len(mot_de_passe) < 8:
+        raise HTTPException(status_code=422, detail="Mot de passe trop court (minimum 8 caractères).")
+    if len(mot_de_passe) > 256:
+        raise HTTPException(status_code=422, detail="Mot de passe trop long (maximum 256 caractères).")
+    if identifiant and identifiant.lower() in mot_de_passe.lower():
+        raise HTTPException(status_code=422, detail="Le mot de passe ne doit pas contenir l'identifiant.")
+
+
 def creer_utilisateur(
     index: Any,  # noqa: ANN401
     identifiant: str,
@@ -128,8 +140,7 @@ def creer_utilisateur(
         raise HTTPException(status_code=422, detail="Identifiant obligatoire.")
     if role not in ROLES:
         raise HTTPException(status_code=422, detail=f"Rôle invalide : « {role} » (attendu : {', '.join(ROLES)}).")
-    if not mot_de_passe:
-        raise HTTPException(status_code=422, detail="Mot de passe obligatoire (lu sur STDIN, jamais en argument).")
+    valider_mot_de_passe(mot_de_passe, identifiant)
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             cursor.execute("SELECT id_utilisateur FROM utilisateur WHERE identifiant = %s", (identifiant,))
@@ -298,8 +309,7 @@ def reinitialiser_mot_de_passe(
 ) -> dict[str, Any]:
     """Remplace l'empreinte et force le changement à la prochaine connexion."""
     _exiger_postgres(index)
-    if not mot_de_passe:
-        raise HTTPException(status_code=422, detail="Mot de passe obligatoire (lu sur STDIN).")
+    valider_mot_de_passe(mot_de_passe, (identifiant or "").strip())
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             cursor.execute(
@@ -656,8 +666,7 @@ def changer_mot_de_passe(
     reconnexion exigée partout, aucun ancien cookie ne survit.
     """
     _exiger_postgres(index)
-    if not nouveau_mot_de_passe:
-        raise HTTPException(status_code=422, detail="Nouveau mot de passe obligatoire.")
+    valider_mot_de_passe(nouveau_mot_de_passe)
     with index.connect() as connexion:
         with connexion.cursor() as cursor:
             cursor.execute(

@@ -47,6 +47,7 @@ from .comptes import (
     revoquer_sessions_utilisateur,
     session_valide,
     utilisateur_dune_session,
+    valider_mot_de_passe,
     verifier_identifiants,
 )
 
@@ -321,11 +322,7 @@ def enregistrer_routes_auth(app: Any, index: Any, config: Any, verifier_auth: An
         mot_de_passe = str(corps.get("mot_de_passe") or "")
         if not identifiant:
             raise HTTPException(status_code=422, detail="Identifiant obligatoire.")
-        if len(mot_de_passe) < 8:
-            raise HTTPException(
-                status_code=422,
-                detail="Mot de passe trop court (minimum 8 caractères).",
-            )
+        valider_mot_de_passe(mot_de_passe, identifiant)
         # Rôle forcé à lecture — jamais admin, jamais configurable par le client.
         resultat = creer_utilisateur(
             index,
