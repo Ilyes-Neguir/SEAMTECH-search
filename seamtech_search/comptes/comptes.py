@@ -110,15 +110,13 @@ def _maintenant() -> datetime:
 
 
 def valider_mot_de_passe(mot_de_passe: str, identifiant: str = "") -> None:
-    """Politique de mot de passe : 8 à 256 caractères, ne contient pas l'identifiant."""
+    """Politique de mot de passe : 8 à 256 caractères."""
     if not mot_de_passe:
         raise HTTPException(status_code=422, detail="Mot de passe obligatoire.")
     if len(mot_de_passe) < 8:
         raise HTTPException(status_code=422, detail="Mot de passe trop court (minimum 8 caractères).")
     if len(mot_de_passe) > 256:
         raise HTTPException(status_code=422, detail="Mot de passe trop long (maximum 256 caractères).")
-    if identifiant and identifiant.lower() in mot_de_passe.lower():
-        raise HTTPException(status_code=422, detail="Le mot de passe ne doit pas contenir l'identifiant.")
 
 
 def creer_utilisateur(
